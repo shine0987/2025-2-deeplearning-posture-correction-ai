@@ -21,15 +21,15 @@ py -3 -m venv C:\temp\mp_env
 실행 예시 (PowerShell)
 - 기본 실행 (labeling_test_images 폴더 사용, CSV 저장명 기본값):
 ```powershell
-& 'C:\temp\mp_env\Scripts\python.exe' 'C:\Users\user\OneDrive\Desktop\과제\딥러닝\skeleton\skeltonpose.py'
+& 'C:\temp\mp_env\Scripts\python.exe' 'C:\Users\user\skeleton\skeltonpose.py'
 ```
 - 입력 폴더와 결과 파일명 지정, 원본 백업:
 ```powershell
-& 'C:\temp\mp_env\Scripts\python.exe' 'C:\Users\user\OneDrive\Desktop\과제\딥러닝\skeleton\skeltonpose.py' --input_folder 'C:\Users\user\OneDrive\Desktop\과제\딥러닝\skeleton\labeling_test_images' --result 'C:\Users\user\OneDrive\Desktop\과제\딥러닝\skeleton\skeleton_coords.csv' --backup 'C:\Users\user\OneDrive\Desktop\과제\딥러닝\skeleton\backup_A1'
+& 'C:\temp\mp_env\Scripts\python.exe' 'C:\Users\user\skeleton\skeltonpose.py' --input_folder 'C:\Users\user\skeleton\labeling_test_images' --result 'C:\Users\user\skeleton\skeleton_coords.csv' --backup 'C:\Users\user\OneDrive\Desktop\과제\딥러닝\skeleton\backup_A1'
 ```
 - 백업 없이 입력 폴더의 이미지 덮어쓰기:
 ```powershell
-& 'C:\temp\mp_env\Scripts\python.exe' 'C:\Users\user\skeleton\skeltonpose.py' --input_folder 'C:\Users\user\skeleton\labeling_test_images' --result 'C:\Users\user\OneDrive\Desktop\과제\딥러닝\skeleton\skeleton_coords.csv'
+& 'C:\temp\mp_env\Scripts\python.exe' 'C:\Users\user\skeleton\skeltonpose.py' --input_folder 'C:\Users\user\skeleton\labeling_test_images' --result 'C:\Users\user\skeleton\skeleton_coords.csv'
 ```
 
 옵션 설명
@@ -58,4 +58,5 @@ GUI 사용
 - 원하는 출력 형식(예: 추가 메타 정보, 타임스탬프, JSON 출력 등)이 있으면 알려주세요.
 
 만약 오류나 문제 시 Visual_Studio 안의 ai모델 "GitHub Copilot" 사용 추천
+
 
