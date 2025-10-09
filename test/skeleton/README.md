@@ -29,7 +29,7 @@ py -3 -m venv C:\temp\mp_env
 ```
 - 백업 없이 입력 폴더의 이미지 덮어쓰기:
 ```powershell
-& 'C:\temp\mp_env\Scripts\python.exe' 'C:\Users\user\OneDrive\Desktop\과제\딥러닝\skeleton\skeltonpose.py' --input_folder 'C:\Users\user\OneDrive\Desktop\과제\딥러닝\skeleton\labeling_test_images' --result 'C:\Users\user\OneDrive\Desktop\과제\딥러닝\skeleton\skeleton_coords.csv'
+& 'C:\temp\mp_env\Scripts\python.exe' 'C:\Users\user\skeleton\skeltonpose.py' --input_folder 'C:\Users\user\skeleton\labeling_test_images' --result 'C:\Users\user\OneDrive\Desktop\과제\딥러닝\skeleton\skeleton_coords.csv'
 ```
 
 옵션 설명
@@ -51,10 +51,11 @@ GUI 사용
 - `gui.py`를 실행하면 간단한 Tkinter 창이 뜨며, 폴더 선택과 실행 버튼으로 동일한 처리를 수행할 수 있습니다.
 - GUI 실행 (PowerShell):
 ```powershell
-& 'C:\temp\mp_env\Scripts\python.exe' 'C:\Users\user\OneDrive\Desktop\과제\딥러닝\skeleton\gui.py'
+& 'C:\temp\mp_env\Scripts\python.exe' 'C:\Users\user\skeleton\gui.py'
 ```
 
 추가 요청
 - 원하는 출력 형식(예: 추가 메타 정보, 타임스탬프, JSON 출력 등)이 있으면 알려주세요.
 
 만약 오류나 문제 시 Visual_Studio 안의 ai모델 "GitHub Copilot" 사용 추천
+
