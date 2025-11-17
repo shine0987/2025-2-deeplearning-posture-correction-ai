@@ -31,27 +31,42 @@ UPPER_BODY_LANDMARKS = {
 }
 
 class PosePreprocessor:
-    def __init__(self):
+    def __init__(self, model_complexity=1):
+        """초기화 - MediaPipe Pose 설정 최적화"""
         self.pose = mp_pose.Pose(
             static_image_mode=True,
-            min_detection_confidence=0.5,
+            model_complexity=model_complexity,  # 0(가벼움), 1(균형), 2(정확)
+            min_detection_confidence=0.6,  # 0.5 -> 0.6 (더 신뢰성 있는 감지)
             min_tracking_confidence=0.5
         )
+        self.processed_count = 0
+        self.failed_count = 0
         
     def safe_imread(self, path: Path) -> Optional[np.ndarray]:
-        """안전한 이미지 읽기 (한글 경로 지원)"""
+        """안전한 이미지 읽기 (한글 경로 지원) + 품질 검증"""
         try:
             data = np.fromfile(str(path), dtype=np.uint8)
             if data.size == 0:
                 return None
             img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+            
+            # 이미지 품질 검증
+            if img is None:
+                return None
+            
+            h, w = img.shape[:2]
+            # 너무 작은 이미지 필터링 (최소 100x100)
+            if h < 100 or w < 100:
+                logging.warning(f"이미지 크기가 너무 작음 ({w}x{h}): {path.name}")
+                return None
+            
             return img
         except Exception as e:
             logging.error(f"이미지 로드 실패 {path}: {e}")
             return None
     
     def extract_pose_landmarks(self, image: np.ndarray) -> Optional[Dict]:
-        """이미지에서 포즈 랜드마크 추출"""
+        """이미지에서 포즈 랜드마크 추출 + visibility 검증"""
         try:
             # BGR to RGB 변환
             rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -63,10 +78,18 @@ class PosePreprocessor:
             landmarks = results.pose_landmarks.landmark
             h, w = image.shape[:2]
             
-            # 상체 랜드마크 추출
+            # 상체 랜드마크 추출 및 visibility 검증
             pose_data = {}
+            min_visibility = 0.5  # 최소 가시성 임계값
+            
             for name, idx in UPPER_BODY_LANDMARKS.items():
                 landmark = landmarks[idx]
+                
+                # visibility가 너무 낮으면 제외
+                if landmark.visibility < min_visibility:
+                    logging.debug(f"{name} visibility 낮음: {landmark.visibility:.2f}")
+                    return None
+                
                 pose_data[f'{name}_x'] = landmark.x
                 pose_data[f'{name}_y'] = landmark.y
                 pose_data[f'{name}_x_px'] = int(landmark.x * w)
@@ -77,6 +100,10 @@ class PosePreprocessor:
             angles = self.calculate_angles(pose_data)
             pose_data.update(angles)
             
+            # 추가 특성 계산
+            extra_features = self.calculate_extra_features(pose_data)
+            pose_data.update(extra_features)
+            
             return pose_data
             
         except Exception as e:
@@ -84,7 +111,7 @@ class PosePreprocessor:
             return None
     
     def calculate_angles(self, pose_data: Dict) -> Dict:
-        """자세 각도 계산"""
+        """자세 각도 계산 (개선된 버전)"""
         angles = {}
         
         try:
@@ -104,14 +131,14 @@ class PosePreprocessor:
                 nose_x - shoulder_center_x,
                 shoulder_center_y - nose_y
             ))
-            angles['neck_angle'] = neck_angle
+            angles['neck_angle'] = self._normalize_angle(neck_angle)
             
             # 어깨 기울기 각도
             shoulder_angle = np.degrees(np.arctan2(
                 right_shoulder_y - left_shoulder_y,
                 right_shoulder_x - left_shoulder_x
             ))
-            angles['shoulder_angle'] = shoulder_angle
+            angles['shoulder_angle'] = self._normalize_angle(shoulder_angle)
             
             # 허리 기울기 각도
             left_hip_x = pose_data['left_hip_x']
@@ -123,7 +150,7 @@ class PosePreprocessor:
                 right_hip_y - left_hip_y,
                 right_hip_x - left_hip_x
             ))
-            angles['hip_angle'] = hip_angle
+            angles['hip_angle'] = self._normalize_angle(hip_angle)
             
             # 상체 전체 기울기 (어깨 중심 - 허리 중심)
             hip_center_x = (left_hip_x + right_hip_x) / 2
@@ -133,7 +160,7 @@ class PosePreprocessor:
                 shoulder_center_x - hip_center_x,
                 hip_center_y - shoulder_center_y
             ))
-            angles['torso_angle'] = torso_angle
+            angles['torso_angle'] = self._normalize_angle(torso_angle)
             
         except Exception as e:
             logging.error(f"각도 계산 실패: {e}")
@@ -146,6 +173,58 @@ class PosePreprocessor:
             }
         
         return angles
+    
+    def _normalize_angle(self, angle: float) -> float:
+        """각도를 -180 ~ 180 범위로 정규화"""
+        while angle > 180:
+            angle -= 360
+        while angle < -180:
+            angle += 360
+        return angle
+    
+    def calculate_extra_features(self, pose_data: Dict) -> Dict:
+        """추가 특성 계산 (거리, 비율 등)"""
+        features = {}
+        
+        try:
+            # 어깨 너비
+            shoulder_width = abs(pose_data['right_shoulder_x'] - pose_data['left_shoulder_x'])
+            features['shoulder_width'] = shoulder_width
+            
+            # 엉덩이 너비
+            hip_width = abs(pose_data['right_hip_x'] - pose_data['left_hip_x'])
+            features['hip_width'] = hip_width
+            
+            # 상체 높이 (어깨 중심 - 엉덩이 중심)
+            shoulder_center_y = (pose_data['left_shoulder_y'] + pose_data['right_shoulder_y']) / 2
+            hip_center_y = (pose_data['left_hip_y'] + pose_data['right_hip_y']) / 2
+            torso_height = abs(hip_center_y - shoulder_center_y)
+            features['torso_height'] = torso_height
+            
+            # 목 길이 (코 - 어깨 중심)
+            neck_length = np.sqrt(
+                (pose_data['nose_x'] - (pose_data['left_shoulder_x'] + pose_data['right_shoulder_x'])/2)**2 +
+                (pose_data['nose_y'] - (pose_data['left_shoulder_y'] + pose_data['right_shoulder_y'])/2)**2
+            )
+            features['neck_length'] = neck_length
+            
+            # 비율 계산
+            if hip_width > 0:
+                features['shoulder_hip_ratio'] = shoulder_width / hip_width
+            else:
+                features['shoulder_hip_ratio'] = 1.0
+                
+        except Exception as e:
+            logging.debug(f"추가 특성 계산 실패: {e}")
+            features = {
+                'shoulder_width': 0.0,
+                'hip_width': 0.0,
+                'torso_height': 0.0,
+                'neck_length': 0.0,
+                'shoulder_hip_ratio': 1.0
+            }
+        
+        return features
     
     def process_image_folder(self, input_folder: str, label: str = 'unlabeled') -> List[Dict]:
         """폴더 내 모든 이미지 처리"""
@@ -167,15 +246,21 @@ class PosePreprocessor:
         
         results = []
         processed_count = 0
+        failed_count = 0
+        total_files = len(image_files)
         
-        for image_file in image_files:
+        logging.info(f"총 {total_files}개 이미지 처리 시작...")
+        
+        for idx, image_file in enumerate(image_files, 1):
             image = self.safe_imread(image_file)
             if image is None:
+                failed_count += 1
                 continue
             
             pose_data = self.extract_pose_landmarks(image)
             if pose_data is None:
                 logging.warning(f"포즈 추출 실패: {image_file.name}")
+                failed_count += 1
                 continue
             
             # 이미지 정보 추가
@@ -186,10 +271,17 @@ class PosePreprocessor:
             results.append(pose_data)
             processed_count += 1
             
-            if processed_count % 10 == 0:
-                logging.info(f"처리 완료: {processed_count}/{len(image_files)}")
+            # 진행률 표시 개선 (10% 단위)
+            if idx % max(1, total_files // 10) == 0 or idx == total_files:
+                progress = (idx / total_files) * 100
+                logging.info(f"진행률: {progress:.1f}% ({idx}/{total_files}) - 성공: {processed_count}, 실패: {failed_count}")
         
-        logging.info(f"폴더 '{input_folder}' 처리 완료: {processed_count}개 이미지")
+        success_rate = (processed_count / total_files * 100) if total_files > 0 else 0
+        logging.info(f"폴더 '{input_folder}' 처리 완료: {processed_count}개 성공 ({success_rate:.1f}%), {failed_count}개 실패")
+        
+        self.processed_count += processed_count
+        self.failed_count += failed_count
+        
         return results
     
     def process_labeled_data(self, data_folder: str) -> List[Dict]:
