@@ -120,17 +120,17 @@ def run_training():
         
         # 모델 평가
         logging.info("훈련 세트 평가 중...")
-        train_accuracy, _, _ = cnn_lstm_model.evaluate(
+        train_accuracy, _, _, _ = cnn_lstm_model.evaluate(
             X_img_train, X_num_train, y_train, dataset_name="Train"
         )
         
         logging.info("검증 세트 평가 중...")
-        val_accuracy, _, _ = cnn_lstm_model.evaluate(
+        val_accuracy, _, _, _ = cnn_lstm_model.evaluate(
             X_img_val, X_num_val, y_val, dataset_name="Validation"
         )
         
         logging.info("테스트 세트 평가 중...")
-        test_accuracy, _, _ = cnn_lstm_model.evaluate(
+        test_accuracy, _, _, _ = cnn_lstm_model.evaluate(
             X_img_test, X_num_test, y_test, dataset_name="Test"
         )
         
