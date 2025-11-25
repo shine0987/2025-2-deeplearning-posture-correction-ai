@@ -11,7 +11,7 @@ from tensorflow.keras.models import Model
 from tensorflow.keras.layers import (
     Input, Conv2D, MaxPooling2D, Dense, Dropout, 
     BatchNormalization, concatenate, GlobalAveragePooling2D,
-    LSTM, TimeDistributed, Reshape, Flatten
+    LSTM, TimeDistributed
 )
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.regularizers import l2
@@ -34,16 +34,23 @@ from typing import Tuple, List
 logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
 
 class CNNLSTMModel:
-    def __init__(self, img_height=128, img_width=128, sequence_length=5, dropout_rate=0.4):
+    """CNN + LSTM 하이브리드 자세 분류 모델"""
+    
+    def __init__(self, csv_path=None, image_dir=None, model_name='cnn_lstm',
+                 img_height=112, img_width=112, sequence_length=5, dropout_rate=0.35):
         """
-        CNN + LSTM 하이브리드 자세 분류 모델
-        
         Args:
-            img_height: 이미지 높이
-            img_width: 이미지 너비
-            sequence_length: LSTM 시퀀스 길이
-            dropout_rate: 드롭아웃 비율
+            csv_path (str): CSV 파일 경로 (optional)
+            image_dir (str): 이미지 디렉토리 경로 (optional)
+            model_name (str): 모델 이름 (default: 'cnn_lstm')
+            img_height (int): 이미지 높이 (default: 128)
+            img_width (int): 이미지 너비 (default: 128)
+            sequence_length (int): LSTM 시퀀스 길이 (default: 5)
+            dropout_rate (float): 드롭아웃 비율 (default: 0.4)
         """
+        self.csv_path = csv_path
+        self.image_dir = image_dir
+        self.model_name = model_name
         self.img_height = img_height
         self.img_width = img_width
         self.sequence_length = sequence_length
@@ -71,12 +78,12 @@ class CNNLSTMModel:
             ]
             
             # 좌표 특성 추가
-            coordinate_features = []
-            for body_part in ['nose', 'left_shoulder', 'right_shoulder', 'left_hip', 'right_hip']:
-                for coord in ['x', 'y']:
-                    col_name = f'{body_part}_{coord}'
-                    if col_name in df.columns:
-                        coordinate_features.append(col_name)
+            coordinate_features = [
+                f'{part}_{coord}'
+                for part in ['nose', 'left_shoulder', 'right_shoulder', 'left_hip', 'right_hip']
+                for coord in ['x', 'y']
+                if f'{part}_{coord}' in df.columns
+            ]
             
             if coordinate_features:
                 self.feature_columns.extend(coordinate_features)
@@ -102,35 +109,88 @@ class CNNLSTMModel:
             raise
     
     def load_images_from_folder(self, image_dir: str, labels: np.ndarray) -> Tuple:
-        """폴더에서 이미지 로드"""
+        """폴더에서 이미지 로드 (한글 경로 지원)"""
         image_path = Path(image_dir)
         images = []
         valid_indices = []
+        failed_count = 0
+        
+        logging.info(f"이미지 로드 시작: {len(labels)}개 파일")
         
         for idx, label in enumerate(labels):
             label_folder = image_path / label
+            
+            # 폴더 확인
             if not label_folder.exists():
-                logging.warning(f"폴더가 없습니다: {label_folder}")
+                if idx == 0:  # 처음에만 경고
+                    logging.warning(f"폴더가 없습니다: {label_folder}")
+                failed_count += 1
                 continue
             
-            img_files = list(label_folder.glob('*.jpg')) + \
-                       list(label_folder.glob('*.png')) + \
-                       list(label_folder.glob('*.jpeg'))
+            # 이미지 파일 찾기
+            img_files = (
+                list(label_folder.glob('*.jpg')) + 
+                list(label_folder.glob('*.JPG')) +
+                list(label_folder.glob('*.png')) + 
+                list(label_folder.glob('*.PNG')) +
+                list(label_folder.glob('*.jpeg')) +
+                list(label_folder.glob('*.JPEG'))
+            )
             
-            if img_files:
-                img_path = img_files[min(idx % len(img_files), len(img_files)-1)]
-                img = cv2.imread(str(img_path))
+            if not img_files:
+                if idx == 0:
+                    logging.warning(f"{label_folder}에 이미지 파일이 없습니다")
+                failed_count += 1
+                continue
+            
+            # 인덱스에 맞는 이미지 선택
+            img_idx = idx % len(img_files)
+            img_path = img_files[img_idx]
+            
+            # 한글 경로 지원 이미지 로드
+            try:
+                # 한글 경로 처리
+                img_array = np.fromfile(str(img_path), dtype=np.uint8)
+                img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+                
+                if img is None:
+                    # 일반 로드 재시도
+                    img = cv2.imread(str(img_path))
+                
                 if img is not None:
+                    # 이미지 처리
                     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                    img = cv2.resize(img, (self.img_width, self.img_height))
+                    img = cv2.resize(img, (self.img_width, self.img_height), 
+                                   interpolation=cv2.INTER_AREA)
                     images.append(img)
                     valid_indices.append(idx)
+                else:
+                    failed_count += 1
+                    
+            except Exception as e:
+                logging.debug(f"이미지 로드 실패 {img_path.name}: {e}")
+                failed_count += 1
+                continue
+            
+            # 진행률 표시
+            if (idx + 1) % max(1, len(labels) // 10) == 0:
+                progress = (idx + 1) / len(labels) * 100
+                logging.info(f"진행률: {progress:.0f}% ({len(images)}/{idx+1})")
         
         if len(images) == 0:
-            raise ValueError("이미지를 로드할 수 없습니다. 이미지 폴더를 확인하세요.")
+            raise ValueError(
+                f"이미지를 로드할 수 없습니다. 폴더를 확인하세요: {image_dir}\n"
+                f"필요한 폴더: {set(labels)}"
+            )
         
+        # 정규화
         images = np.array(images, dtype=np.float32) / 255.0
-        logging.info(f"이미지 로드 완료: {len(images)}개")
+        
+        success_rate = len(images) / len(labels) * 100
+        logging.info(
+            f"이미지 로드 완료: {len(images)}개 성공 ({success_rate:.1f}%), "
+            f"{failed_count}개 실패"
+        )
         
         return images, valid_indices
     
@@ -144,70 +204,140 @@ class CNNLSTMModel:
         # 라벨별로 시퀀스 생성
         unique_labels = np.unique(labels)
         
+        logging.info(f"시퀀스 생성 시작 (sequence_length={self.sequence_length})")
+        
         for label in unique_labels:
             label_indices = np.where(labels == label)[0]
             
+            if len(label_indices) < self.sequence_length:
+                logging.warning(
+                    f"라벨 '{label}'의 데이터가 부족합니다: "
+                    f"{len(label_indices)}개 < {self.sequence_length}개"
+                )
+                continue
+            
             for i in range(len(label_indices) - self.sequence_length + 1):
                 indices = label_indices[i:i + self.sequence_length]
-                img_sequences.append(images[indices])
-                num_sequences.append(numeric_data[indices])
-                seq_labels.append(label)
+                
+                try:
+                    img_sequences.append(images[indices])
+                    num_sequences.append(numeric_data[indices])
+                    seq_labels.append(label)
+                except IndexError as e:
+                    logging.error(f"인덱스 오류: {e}")
+                    continue
+        
+        if len(img_sequences) == 0:
+            raise ValueError(
+                f"시퀀스를 생성할 수 없습니다. "
+                f"각 라벨당 최소 {self.sequence_length}개의 데이터가 필요합니다."
+            )
         
         img_sequences = np.array(img_sequences)
         num_sequences = np.array(num_sequences)
         seq_labels = np.array(seq_labels)
         
-        logging.info(f"시퀀스 생성 완료: {len(img_sequences)}개")
+        logging.info(
+            f"시퀀스 생성 완료: {len(img_sequences)}개 "
+            f"(라벨: {dict(zip(*np.unique(seq_labels, return_counts=True)))})"
+        )
         
         return img_sequences, num_sequences, seq_labels
     
     def augment_data(self, img_seqs: np.ndarray, num_seqs: np.ndarray, 
-                    labels: np.ndarray, augment_factor: int = 1) -> Tuple:
-        """데이터 증강 (변동 감소를 위해 증강 팩터 및 범위 축소)"""
+                    labels: np.ndarray, augment_factor: int = 1, target_class: int = None) -> Tuple:
+        """
+        데이터 증강 (특정 클래스만 선택적 증강 가능)
+        
+        Args:
+            img_seqs: 이미지 시퀀스 배열
+            num_seqs: 수치 시퀀스 배열
+            labels: 라벨 배열
+            augment_factor: 증강 팩터 (default: 1)
+            target_class: 증강할 클래스 (None이면 모든 클래스)
+            
+        Returns:
+            증강된 이미지, 수치, 라벨 배열
+        """
         aug_img_seqs = []
         aug_num_seqs = []
         aug_labels = []
         
         datagen = ImageDataGenerator(
-            rotation_range=5,  # 8 -> 5로 감소
-            width_shift_range=0.05,  # 0.08 -> 0.05로 감소
-            height_shift_range=0.05,  # 0.08 -> 0.05로 감소
-            zoom_range=0.05,  # 0.08 -> 0.05로 감소
-            fill_mode='nearest'
+            rotation_range=5,
+            width_shift_range=0.05,
+            height_shift_range=0.05,
+            zoom_range=0.05,
+            fill_mode='nearest',
+            horizontal_flip=False  # 좌우 반전 비활성화 (자세 데이터 특성)
         )
         
+        target_msg = f"클래스 {target_class}" if target_class is not None else "모든 클래스"
+        logging.info(f"데이터 증강 시작 ({target_msg}, factor={augment_factor})")
+        
         for i in range(len(img_seqs)):
-            # 원본
+            current_label = labels[i]
+            
+            # 원본 항상 추가
             aug_img_seqs.append(img_seqs[i])
             aug_num_seqs.append(num_seqs[i])
             aug_labels.append(labels[i])
             
-            # 증강
+            # 특정 클래스만 증강 (target_class가 지정된 경우)
+            if target_class is not None and current_label != target_class:
+                continue
+            
+            # 증강 데이터 생성
             for _ in range(augment_factor):
                 aug_img_seq = []
+                
                 for frame in img_seqs[i]:
+                    # 이미지 증강
                     img = frame.reshape((1,) + frame.shape)
                     aug_img = datagen.flow(img, batch_size=1)[0][0]
+                    # 값 범위 유지 [0, 1]
+                    aug_img = np.clip(aug_img, 0, 1)
                     aug_img_seq.append(aug_img)
                 
                 aug_img_seqs.append(np.array(aug_img_seq))
                 
-                # 노이즈 감소 (0.01 -> 0.005)
+                # 수치 데이터 노이즈 추가
                 noise = np.random.normal(0, 0.005, num_seqs[i].shape)
-                aug_num_seqs.append(num_seqs[i] + noise)
+                aug_num_data = num_seqs[i] + noise
+                # 각도 범위 유지 [-180, 180]
+                aug_num_data = np.clip(aug_num_data, -180, 180)
+                aug_num_seqs.append(aug_num_data)
                 aug_labels.append(labels[i])
+            
+            # 진행률 표시
+            if (i + 1) % max(1, len(img_seqs) // 10) == 0:
+                progress = (i + 1) / len(img_seqs) * 100
+                logging.info(f"증강 진행률: {progress:.0f}%")
         
         aug_img_seqs = np.array(aug_img_seqs)
         aug_num_seqs = np.array(aug_num_seqs)
         aug_labels = np.array(aug_labels)
         
-        logging.info(f"데이터 증강 완료: {len(aug_img_seqs)}개")
+        # 클래스별 통계
+        unique, counts = np.unique(aug_labels, return_counts=True)
+        class_dist = dict(zip(unique, counts))
+        logging.info(f"데이터 증강 완료: {len(aug_img_seqs)}개 (클래스 분포: {class_dist})")
         
         return aug_img_seqs, aug_num_seqs, aug_labels
     
     def prepare_data(self, df: pd.DataFrame, image_dir: str, 
-                    augment: bool = True) -> Tuple:
-        """데이터 전처리 및 준비"""
+                    augment: bool = True, save_split: bool = False, 
+                    output_dir: str = 'data/split_images') -> Tuple:
+        """
+        데이터 전처리 및 준비
+        
+        Args:
+            df: 데이터프레임
+            image_dir: 원본 이미지 디렉토리
+            augment: 데이터 증강 여부
+            save_split: 분할된 이미지를 폴더로 저장할지 여부
+            output_dir: 분할된 이미지 저장 디렉토리
+        """
         X_numeric = df[self.feature_columns].values
         y = df['label'].values
         
@@ -218,6 +348,7 @@ class CNNLSTMModel:
         
         X_numeric = X_numeric[valid_indices]
         y_encoded = y_encoded[valid_indices]
+        y_labels = y[valid_indices]  # 원본 라벨도 저장
         
         self.scaler = StandardScaler()
         X_numeric_scaled = self.scaler.fit_transform(X_numeric)
@@ -230,95 +361,263 @@ class CNNLSTMModel:
         if len(X_img_seq) == 0:
             raise ValueError("시퀀스를 생성할 수 없습니다.")
         
-        # 분할 (70/20/10)
-        X_img_temp, X_img_test, X_num_temp, X_num_test, y_temp, y_test = train_test_split(
-            X_img_seq, X_num_seq, y_seq, 
-            test_size=0.15, random_state=42, stratify=y_seq
+        # 데이터 분할 및 증강
+        result = self._split_and_augment_data(
+            X_img_seq, X_num_seq, y_seq, augment
         )
         
-        X_img_train, X_img_val, X_num_train, X_num_val, y_train, y_val = train_test_split(
-            X_img_temp, X_num_temp, y_temp,
-            test_size=0.18, random_state=42, stratify=y_temp
-        )
-        
-        logging.info(f"분할 후 - 훈련: {len(X_img_train)}, 검증: {len(X_img_val)}, 테스트: {len(X_img_test)}")
-        
-        # 훈련 세트만 증강 (안정성을 위해 증강 팩터 1로 감소)
-        if augment and len(X_img_train) > 0:
-            X_img_train, X_num_train, y_train = self.augment_data(
-                X_img_train, X_num_train, y_train, augment_factor=1
+        # 이미지 분할 저장
+        if save_split:
+            self._save_split_images(
+                X_img_seq, y_seq, output_dir, 
+                test_size=0.15, val_size=0.18
             )
         
+        return result
+    
+    def _save_split_images(self, X_img, y, output_dir, test_size=0.15, val_size=0.18):
+        """
+        이미지를 훈련/검증/테스트 폴더로 분할 저장
+        
+        Args:
+            X_img: 이미지 시퀀스 배열
+            y: 라벨 배열
+            output_dir: 출력 디렉토리
+            test_size: 테스트 세트 비율
+            val_size: 검증 세트 비율 (temp 기준)
+        """
+        import shutil
+        from datetime import datetime
+        
+        output_path = Path(output_dir)
+        
+        # 디렉토리 생성
+        for split in ['train', 'val', 'test']:
+            for label_name in self.label_encoder.classes_:
+                split_dir = output_path / split / label_name
+                split_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 데이터 분할 (증강 전 원본만)
+        from sklearn.model_selection import train_test_split
+        
+        # 인덱스 배열 생성
+        indices = np.arange(len(X_img))
+        
+        # Train/Temp 분할
+        idx_temp, idx_test = train_test_split(
+            indices, test_size=test_size, random_state=42, stratify=y
+        )
+        
+        # Train/Val 분할
+        y_temp = y[idx_temp]
+        idx_train, idx_val = train_test_split(
+            idx_temp, test_size=val_size, random_state=42, stratify=y_temp
+        )
+        
+        # 이미지 저장
+        splits = {
+            'train': idx_train,
+            'val': idx_val,
+            'test': idx_test
+        }
+        
+        logging.info(f"이미지 분할 저장 시작: {output_dir}")
+        
+        for split_name, indices in splits.items():
+            for idx in indices:
+                # 시퀀스의 첫 번째 프레임만 저장 (대표 이미지)
+                img = X_img[idx][0]  # 첫 번째 프레임
+                label = self.label_encoder.inverse_transform([y[idx]])[0]
+                
+                # 파일명 생성 (타임스탬프 + 인덱스)
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+                filename = f"{label}_{idx}_{timestamp}.jpg"
+                filepath = output_path / split_name / label / filename
+                
+                # 이미지 저장 (0-1 범위를 0-255로 변환)
+                img_uint8 = (img * 255).astype(np.uint8)
+                img_bgr = cv2.cvtColor(img_uint8, cv2.COLOR_RGB2BGR)
+                cv2.imwrite(str(filepath), img_bgr)
+        
+        # 통계 출력
+        logging.info(f"이미지 분할 완료:")
+        for split_name, indices in splits.items():
+            unique, counts = np.unique(y[indices], return_counts=True)
+            class_dist = {self.label_encoder.inverse_transform([u])[0]: c 
+                         for u, c in zip(unique, counts)}
+            logging.info(f"  {split_name}: {len(indices)}개 - {class_dist}")
+    
+    def _split_and_augment_data(self, X_img, X_num, y, augment):
+        """데이터 분할 및 증강 헬퍼 메서드"""
+        # Train/Temp 분할 (85/15)
+        X_img_temp, X_img_test, X_num_temp, X_num_test, y_temp, y_test = train_test_split(
+            X_img, X_num, y, test_size=0.15, random_state=42, stratify=y
+        )
+        
+        # Train/Val 분할 (70/15 from temp)
+        X_img_train, X_img_val, X_num_train, X_num_val, y_train, y_val = train_test_split(
+            X_img_temp, X_num_temp, y_temp, test_size=0.18, random_state=42, stratify=y_temp
+        )
+        
+        # 원본 데이터 개수 저장
+        original_train_count = len(X_img_train)
+        original_train_class_dist = dict(zip(*np.unique(y_train, return_counts=True)))
+        
+        logging.info(f"="*60)
+        logging.info(f"원본 데이터 분할 - 훈련: {len(X_img_train)}, 검증: {len(X_img_val)}, 테스트: {len(X_img_test)}")
+        logging.info(f"훈련 세트 클래스 분포: {original_train_class_dist}")
+        logging.info(f"="*60)
+        
+        # 훈련 데이터 증강 (모든 클래스 2배)
+        if augment and len(X_img_train) > 0:
+            # 클래스 분포 확인
+            unique, counts = np.unique(y_train, return_counts=True)
+            if len(unique) > 0:
+                # 모든 클래스 1배 증강 (과적합 방지)
+                aug_factor = 1
+                
+                logging.info(
+                    f"모든 클래스를 {aug_factor}배 증강합니다."
+                )
+                
+                # 모든 클래스 증강 (target_class=None)
+                X_img_train, X_num_train, y_train = self.augment_data(
+                    X_img_train, X_num_train, y_train, 
+                    augment_factor=aug_factor,
+                    target_class=None
+                )
+            else:
+                # 클래스가 1개만 있어도 1배 증강
+                aug_factor = 1
+                logging.info(f"단일 클래스를 {aug_factor}배 증강합니다.")
+                X_img_train, X_num_train, y_train = self.augment_data(
+                    X_img_train, X_num_train, y_train, 
+                    augment_factor=aug_factor,
+                    target_class=None
+                )
+        
+        # 증강 후 데이터 증가량 출력
+        augmented_train_count = len(X_img_train)
+        augmented_train_class_dist = dict(zip(*np.unique(y_train, return_counts=True)))
+        
+        if augment and augmented_train_count > original_train_count:
+            increase_count = augmented_train_count - original_train_count
+            increase_percent = (increase_count / original_train_count) * 100
+            
+            logging.info(f"="*60)
+            logging.info(f"✅ 데이터 증강 완료!")
+            logging.info(f"원본 훈련 데이터: {original_train_count}개")
+            logging.info(f"증강 후 훈련 데이터: {augmented_train_count}개")
+            logging.info(f"증가량: +{increase_count}개 ({increase_percent:.1f}% 증가)")
+            logging.info(f"증강 후 클래스 분포: {augmented_train_class_dist}")
+            logging.info(f"="*60)
+        
+        # 최종 분포 출력
         total = len(X_img_train) + len(X_img_val) + len(X_img_test)
-        logging.info(f"최종 데이터 분포:")
-        logging.info(f"  훈련: {len(X_img_train)}개 ({len(X_img_train)/total*100:.1f}%)")
-        logging.info(f"  검증: {len(X_img_val)}개 ({len(X_img_val)/total*100:.1f}%)")
-        logging.info(f"  테스트: {len(X_img_test)}개 ({len(X_img_test)/total*100:.1f}%)")
+        logging.info(
+            f"최종 분포 - 훈련: {len(X_img_train)} ({len(X_img_train)/total*100:.1f}%), "
+            f"검증: {len(X_img_val)} ({len(X_img_val)/total*100:.1f}%), "
+            f"테스트: {len(X_img_test)} ({len(X_img_test)/total*100:.1f}%)"
+        )
         
         return (X_img_train, X_num_train, y_train,
                 X_img_val, X_num_val, y_val,
                 X_img_test, X_num_test, y_test)
     
+    def _build_cnn_block(self, x, filters, name_prefix):
+        """
+CNN 블록 생성 헬퍼
+        
+        Args:
+            x: 입력 텀서
+            filters: 필터 수
+            name_prefix: 레이어 이름 접두사
+            
+        Returns:
+            처리된 텀서
+        """
+        x = TimeDistributed(Conv2D(
+            filters, (3, 3), activation='relu', padding='same', 
+            kernel_regularizer=l2(0.001), name=f'{name_prefix}_conv'
+        ))(x)
+        x = TimeDistributed(BatchNormalization(momentum=0.8, name=f'{name_prefix}_bn'))(x)
+        x = TimeDistributed(MaxPooling2D((2, 2), name=f'{name_prefix}_pool'))(x)
+        x = TimeDistributed(Dropout(self.dropout_rate * 0.4, name=f'{name_prefix}_dropout'))(x)
+        return x
+    
+    def _build_lstm_block(self, x, units, return_sequences=True, name_prefix='lstm'):
+        """
+LSTM 블록 생성 헬퍼
+        
+        Args:
+            x: 입력 텀서
+            units: LSTM 유닛 수
+            return_sequences: 시퀀스 반환 여부
+            name_prefix: 레이어 이름 접두사
+            
+        Returns:
+            처리된 텀서
+        """
+        x = LSTM(
+            units, return_sequences=return_sequences,
+            dropout=self.dropout_rate, recurrent_dropout=0.2,
+            kernel_regularizer=l2(0.001), name=name_prefix
+        )(x)
+        x = BatchNormalization(momentum=0.8, name=f'{name_prefix}_bn')(x)
+        return x
+    
     def build_model(self, num_numeric_features: int, num_classes: int):
         """CNN + LSTM 하이브리드 모델 구성"""
         
-        # === 이미지 시퀀스 브랜치 (CNN + LSTM) ===
-        image_input = Input(shape=(self.sequence_length, self.img_height, self.img_width, 3), 
-                           name='image_input')
+        # 이미지 브랜치
+        image_input = Input(
+            shape=(self.sequence_length, self.img_height, self.img_width, 3),
+            name='image_input'
+        )
         
-        # TimeDistributed CNN으로 각 프레임 처리 (L2 정규화 추가)
-        x = TimeDistributed(Conv2D(32, (3, 3), activation='relu', padding='same', kernel_regularizer=l2(0.001)))(image_input)
-        x = TimeDistributed(BatchNormalization(momentum=0.9))(x)
-        x = TimeDistributed(MaxPooling2D((2, 2)))(x)
-        x = TimeDistributed(Dropout(self.dropout_rate * 0.5))(x)
+        # CNN 블록 (균형잡힌 용량: 3개)
+        x = self._build_cnn_block(image_input, 32, 'cnn1')
+        x = self._build_cnn_block(x, 64, 'cnn2')
+        x = self._build_cnn_block(x, 80, 'cnn3')
+        x = TimeDistributed(GlobalAveragePooling2D(name='gap'))(x)
         
-        x = TimeDistributed(Conv2D(64, (3, 3), activation='relu', padding='same', kernel_regularizer=l2(0.001)))(x)
-        x = TimeDistributed(BatchNormalization(momentum=0.9))(x)
-        x = TimeDistributed(MaxPooling2D((2, 2)))(x)
-        x = TimeDistributed(Dropout(self.dropout_rate * 0.5))(x)
+        # LSTM 블록 (균형잡힌 용량)
+        x = self._build_lstm_block(x, 56, True, 'img_lstm1')
+        x = self._build_lstm_block(x, 28, False, 'img_lstm2')
+        image_features = Dense(28, activation='relu', kernel_regularizer=l2(0.0007), 
+                              name='image_features')(x)
         
-        x = TimeDistributed(Conv2D(128, (3, 3), activation='relu', padding='same', kernel_regularizer=l2(0.001)))(x)
-        x = TimeDistributed(BatchNormalization(momentum=0.9))(x)
-        x = TimeDistributed(GlobalAveragePooling2D())(x)
+        # 수치 브랜치
+        numeric_input = Input(
+            shape=(self.sequence_length, num_numeric_features),
+            name='numeric_input'
+        )
         
-        # LSTM으로 시간적 패턴 학습 (recurrent_dropout 추가)
-        x = LSTM(64, return_sequences=True, dropout=self.dropout_rate, recurrent_dropout=0.2, kernel_regularizer=l2(0.001))(x)
-        x = BatchNormalization(momentum=0.9)(x)
-        x = LSTM(32, dropout=self.dropout_rate, recurrent_dropout=0.2, kernel_regularizer=l2(0.001))(x)
-        x = BatchNormalization(momentum=0.9)(x)
-        image_features = Dense(32, activation='relu', kernel_regularizer=l2(0.001), name='image_features')(x)
+        y = self._build_lstm_block(numeric_input, 28, True, 'num_lstm1')
+        y = self._build_lstm_block(y, 14, False, 'num_lstm2')
+        numeric_features = Dense(14, activation='relu', kernel_regularizer=l2(0.0007),
+                                name='numeric_features')(y)
         
-        # === 수치 시퀀스 브랜치 (LSTM) ===
-        numeric_input = Input(shape=(self.sequence_length, num_numeric_features), 
-                             name='numeric_input')
-        
-        y = LSTM(32, return_sequences=True, dropout=self.dropout_rate, recurrent_dropout=0.2, kernel_regularizer=l2(0.001))(numeric_input)
-        y = BatchNormalization(momentum=0.9)(y)
-        y = LSTM(16, dropout=self.dropout_rate, recurrent_dropout=0.2, kernel_regularizer=l2(0.001))(y)
-        y = BatchNormalization(momentum=0.9)(y)
-        numeric_features = Dense(16, activation='relu', kernel_regularizer=l2(0.001), name='numeric_features')(y)
-        
-        # === 융합 ===
+        # 융합 브랜치 (균형잡힌 용량)
         merged = concatenate([image_features, numeric_features], name='fusion')
         
-        z = Dense(32, activation='relu', kernel_regularizer=l2(0.001))(merged)
-        z = BatchNormalization(momentum=0.9)(z)
+        z = Dense(28, activation='relu', kernel_regularizer=l2(0.0007))(merged)
+        z = BatchNormalization(momentum=0.8)(z)
         z = Dropout(self.dropout_rate)(z)
-        
-        z = Dense(16, activation='relu', kernel_regularizer=l2(0.001))(z)
-        z = Dropout(self.dropout_rate)(z)
+        z = Dense(14, activation='relu', kernel_regularizer=l2(0.0007))(z)
+        z = Dropout(self.dropout_rate * 0.8)(z)
         
         output = Dense(num_classes, activation='softmax', name='output')(z)
         
+        # 모델 생성 및 컴파일
         self.model = Model(
             inputs=[image_input, numeric_input],
             outputs=output,
             name='CNN_LSTM_Posture_Model'
         )
         
-        optimizer = Adam(learning_rate=0.0005, clipnorm=1.0)  # 학습률 감소 및 gradient clipping
         self.model.compile(
-            optimizer=optimizer,
+            optimizer=Adam(learning_rate=0.001, clipnorm=1.0),  # 학습률 균형 조정
             loss='sparse_categorical_crossentropy',
             metrics=['accuracy']
         )
@@ -330,7 +629,18 @@ class CNNLSTMModel:
     def train(self, X_img_train, X_num_train, y_train,
               X_img_val, X_num_val, y_val,
               epochs=100, batch_size=8):
-        """모델 훈련 (클래스 가중치 적용)"""
+        """
+        모델 훈련
+        
+        Args:
+            X_img_train, X_num_train, y_train: 훈련 데이터
+            X_img_val, X_num_val, y_val: 검증 데이터
+            epochs: 훈련 에폭 수
+            batch_size: 배치 크기
+            
+        Returns:
+            훈련 히스토리
+        """
         if self.model is None:
             raise ValueError("모델이 구성되지 않았습니다.")
         
@@ -340,6 +650,9 @@ class CNNLSTMModel:
             classes=np.unique(y_train),
             y=y_train
         )
+        
+        # 가중치 범위 균형 조정 (0.6 ~ 2.5)
+        class_weights = np.clip(class_weights, 0.6, 2.5)
         class_weight_dict = dict(enumerate(class_weights))
         
         logging.info(f"클래스 가중치: {class_weight_dict}")
@@ -347,17 +660,17 @@ class CNNLSTMModel:
         callbacks = [
             EarlyStopping(
                 monitor='val_loss', 
-                patience=25,  # patience 증가 (안정성 향상)
+                patience=18,  # patience 적절히 조정
                 restore_best_weights=True,
-                min_delta=0.001,  # 최소 개선 임계값 추가
+                min_delta=0.001,  # 임계값 적절히
                 verbose=1
             ),
             ReduceLROnPlateau(
                 monitor='val_loss', 
-                factor=0.6,  # 학습률 감소 속도 완화
-                patience=10,  # patience 증가
+                factor=0.6,
+                patience=7,
                 min_lr=1e-7,
-                min_delta=0.001,  # 최소 개선 임계값 추가
+                min_delta=0.001,
                 verbose=1
             ),
             ModelCheckpoint(
@@ -381,7 +694,18 @@ class CNNLSTMModel:
         return history
     
     def evaluate(self, X_img, X_num, y, dataset_name="Test"):
-        """모델 평가 (개선된 버전 - 상세한 메트릭 및 시각화)"""
+        """
+        모델 평가 및 상세 메트릭 계산
+        
+        Args:
+            X_img: 이미지 데이터
+            X_num: 수치 데이터
+            y: 실제 라벨
+            dataset_name: 데이터셋 이름 (Train/Validation/Test)
+            
+        Returns:
+            accuracy, report, confusion_matrix, metrics
+        """
         if self.model is None:
             raise ValueError("훈련된 모델이 없습니다.")
         
@@ -409,21 +733,37 @@ class CNNLSTMModel:
         
         # 클래스별 성능
         class_names = self.label_encoder.classes_
+        
+        # 클래스 순서 변경: normal을 먼저, abnormal을 나중에
+        # 원본: ['abnormal', 'normal'] -> 변경: ['normal', 'abnormal']
+        if len(class_names) == 2 and class_names[0] == 'abnormal':
+            class_names_reordered = [class_names[1], class_names[0]]  # ['normal', 'abnormal']
+            class_indices_reordered = [1, 0]
+        else:
+            class_names_reordered = class_names
+            class_indices_reordered = list(range(len(class_names)))
+        
         report = classification_report(y, y_pred, target_names=class_names, zero_division=0)
         logging.info(f"\n{dataset_name} 분류 보고서:\n{report}")
         
-        # 혼동행렬
+        # 혼동행렬 (순서 재배치)
         cm = confusion_matrix(y, y_pred)
+        # 행렬 재배치: [0,1] -> [1,0] 순서로
+        if len(class_names) == 2 and class_names[0] == 'abnormal':
+            cm_reordered = cm[np.ix_(class_indices_reordered, class_indices_reordered)]
+        else:
+            cm_reordered = cm
         
         # 예측 신뢰도 분석
         avg_confidence = np.mean(np.max(y_pred_proba, axis=1))
         logging.info(f"평균 예측 신뢰도: {avg_confidence:.4f} ({avg_confidence*100:.2f}%)")
         
-        # 혼동행렬 시각화
-        self._plot_confusion_matrix(cm, class_names, accuracy, dataset_name)
+        # 혼동행렬 시각화 (재배치된 순서)
+        self._plot_confusion_matrix(cm_reordered, class_names_reordered, accuracy, dataset_name)
         
-        # 클래스별 성능 시각화
-        self._plot_class_performance(y, y_pred, y_pred_proba, class_names, dataset_name)
+        # 클래스별 성능 시각화 (재배치된 순서)
+        self._plot_class_performance(y, y_pred, y_pred_proba, class_names_reordered, 
+                                     class_indices_reordered, dataset_name)
         
         # 종합 메트릭 리턴
         metrics = {
@@ -432,7 +772,7 @@ class CNNLSTMModel:
             'recall': recall,
             'f1_score': f1,
             'avg_confidence': avg_confidence,
-            'confusion_matrix': cm,
+            'confusion_matrix': cm_reordered,
             'classification_report': report
         }
         
@@ -442,16 +782,8 @@ class CNNLSTMModel:
         """혼동행렬 시각화"""
         plt.figure(figsize=(10, 8))
         
-        # 퍼센트와 개수 함께 표시
-        cm_percent = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis] * 100
-        
-        # 어노테이션 생성 (개수와 퍼센트)
-        annot = np.empty_like(cm, dtype=object)
-        for i in range(cm.shape[0]):
-            for j in range(cm.shape[1]):
-                annot[i, j] = f'{cm[i, j]}\n({cm_percent[i, j]:.1f}%)'
-        
-        sns.heatmap(cm, annot=annot, fmt='', cmap='Blues', 
+        # 개수만 표시 (퍼센트 제거)
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
                    xticklabels=class_names, yticklabels=class_names,
                    cbar_kws={'label': 'Count'},
                    linewidths=1, linecolor='gray')
@@ -470,13 +802,14 @@ class CNNLSTMModel:
         plt.show()
         plt.close()
     
-    def _plot_class_performance(self, y_true, y_pred, y_pred_proba, class_names, dataset_name):
+    def _plot_class_performance(self, y_true, y_pred, y_pred_proba, class_names, 
+                                class_indices, dataset_name):
         """클래스별 성능 시각화"""
         from sklearn.metrics import precision_recall_fscore_support
         
-        # 클래스별 메트릭 계산
+        # 클래스별 메트릭 계산 (재배치된 순서로)
         precision, recall, f1, support = precision_recall_fscore_support(
-            y_true, y_pred, labels=range(len(class_names)), zero_division=0
+            y_true, y_pred, labels=class_indices, zero_division=0
         )
         
         # 시각화
@@ -507,8 +840,8 @@ class CNNLSTMModel:
         
         # 2. 클래스별 샘플 수 및 예측 신뢰도
         avg_confidence_per_class = []
-        for i in range(len(class_names)):
-            mask = y_true == i
+        for orig_idx in class_indices:
+            mask = y_true == orig_idx
             if mask.sum() > 0:
                 avg_conf = np.mean(np.max(y_pred_proba[mask], axis=1))
                 avg_confidence_per_class.append(avg_conf)
@@ -553,7 +886,12 @@ class CNNLSTMModel:
         plt.close()
     
     def plot_training_history(self, history):
-        """훈련 히스토리 시각화 - 정확도와 손실률 그래프"""
+        """
+        훈련 히스토리 시각화
+        
+        Args:
+            history: 모델 훈련 히스토리
+        """
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
         
         # 에포크 수
@@ -585,7 +923,12 @@ class CNNLSTMModel:
         plt.close()
     
     def save_model(self, model_path: str = 'models/cnn_lstm_model.h5'):
-        """모델 저장"""
+        """
+        모델 및 전처리 객체 저장
+        
+        Args:
+            model_path: 모델 저장 경로
+        """
         if self.model is None:
             raise ValueError("저장할 모델이 없습니다.")
         
@@ -615,25 +958,33 @@ def main():
                        help='훈련 데이터 CSV 파일 경로')
     parser.add_argument('--images', default='data/train_images',
                        help='이미지 폴더 경로')
-    parser.add_argument('--epochs', type=int, default=50,
-                       help='훈련 에폭 수')
-    parser.add_argument('--batch_size', type=int, default=8,
-                       help='배치 크기')
-    parser.add_argument('--img_size', type=int, default=128,
-                       help='이미지 크기 (정사각형)')
+    parser.add_argument('--epochs', type=int, default=35,
+                       help='훈련 에폭 수 (기본: 35, 빠른 테스트: 20)')
+    parser.add_argument('--batch_size', type=int, default=14,
+                       help='배치 크기 (기본: 14, GPU 메모리 부족 시 10으로 감소)')
+    parser.add_argument('--img_size', type=int, default=112,
+                       help='이미지 크기 (기본: 112, 고성능: 128, 경량: 96)')
     parser.add_argument('--sequence_length', type=int, default=5,
                        help='LSTM 시퀀스 길이')
     parser.add_argument('--no_augment', action='store_true',
                        help='데이터 증강 사용 안 함')
+    parser.add_argument('--save_split', action='store_true',
+                       help='훈련/검증/테스트 이미지를 폴더로 분할 저장')
+    parser.add_argument('--output_dir', type=str, default='data/split_images',
+                       help='분할된 이미지 저장 디렉토리')
     
     args = parser.parse_args()
     
     Path('models').mkdir(exist_ok=True)
     
     model = CNNLSTMModel(
+        csv_path=args.data,
+        image_dir=args.images,
+        model_name='cnn_lstm',
         img_height=args.img_size,
         img_width=args.img_size,
-        sequence_length=args.sequence_length
+        sequence_length=args.sequence_length,
+        dropout_rate=0.4
     )
     
     try:
@@ -644,7 +995,10 @@ def main():
         (X_img_train, X_num_train, y_train,
          X_img_val, X_num_val, y_val,
          X_img_test, X_num_test, y_test) = model.prepare_data(
-            df, image_dir, augment=not args.no_augment
+            df, image_dir, 
+            augment=not args.no_augment,
+            save_split=args.save_split,
+            output_dir=args.output_dir
         )
         
         if len(X_img_train) == 0:

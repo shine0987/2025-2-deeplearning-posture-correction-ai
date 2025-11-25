@@ -1,18 +1,12 @@
 """
-상체 데이터 CSV 생성 및 시각화 도구
+상체 데이터 CSV 생성 및 분석 도구
 상체 랜드마크와 각도 데이터만 추출하여 정리된 CSV 파일을 생성합니다.
 """
 
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
 from pathlib import Path
 import logging
-
-# 한글 폰트 설정
-plt.rcParams['font.family'] = 'Malgun Gothic'
-plt.rcParams['axes.unicode_minus'] = False
 
 # 로깅 설정
 logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
@@ -114,73 +108,6 @@ def analyze_upper_body_data(df):
     
     return analysis_results
 
-def create_visualizations(df, output_dir='data'):
-    """상체 데이터 시각화"""
-    
-    output_path = Path(output_dir)
-    output_path.mkdir(exist_ok=True)
-    
-    # 1. 각도 분포 히스토그램
-    angle_columns = ['neck_angle', 'shoulder_angle', 'hip_angle', 'torso_angle']
-    available_angles = [col for col in angle_columns if col in df.columns]
-    
-    if available_angles:
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-        axes = axes.ravel()
-        
-        angle_names = {
-            'neck_angle': '목 각도',
-            'shoulder_angle': '어깨 각도', 
-            'hip_angle': '허리 각도',
-            'torso_angle': '상체 각도'
-        }
-        
-        for i, col in enumerate(available_angles):
-            if i < 4:
-                # 전체 분포
-                axes[i].hist(df[col], bins=30, alpha=0.7, color='skyblue', edgecolor='black')
-                axes[i].set_title(f'{angle_names.get(col, col)} 분포')
-                axes[i].set_xlabel('각도 (도)')
-                axes[i].set_ylabel('빈도')
-                axes[i].grid(True, alpha=0.3)
-        
-        plt.tight_layout()
-        plt.savefig(output_path / 'angle_distributions.png', dpi=300, bbox_inches='tight')
-        plt.show()
-    
-    # 2. 라벨별 각도 비교 박스플롯
-    if 'label' in df.columns and len(df['label'].unique()) > 1:
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-        axes = axes.ravel()
-        
-        for i, col in enumerate(available_angles):
-            if i < 4:
-                # 라벨별 박스플롯
-                df_clean = df[df['label'] != 'unlabeled']
-                if len(df_clean) > 0:
-                    sns.boxplot(data=df_clean, x='label', y=col, ax=axes[i])
-                    axes[i].set_title(f'라벨별 {angle_names.get(col, col)} 비교')
-                    axes[i].set_xlabel('라벨')
-                    axes[i].set_ylabel('각도 (도)')
-                    axes[i].grid(True, alpha=0.3)
-        
-        plt.tight_layout()
-        plt.savefig(output_path / 'label_comparison.png', dpi=300, bbox_inches='tight')
-        plt.show()
-    
-    # 3. 상관관계 히트맵
-    numeric_columns = [col for col in available_angles if col in df.columns]
-    if len(numeric_columns) > 1:
-        plt.figure(figsize=(10, 8))
-        correlation_matrix = df[numeric_columns].corr()
-        
-        sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', center=0,
-                   square=True, fmt='.2f', cbar_kws={'label': '상관계수'})
-        plt.title('상체 각도 간 상관관계')
-        plt.tight_layout()
-        plt.savefig(output_path / 'angle_correlation.png', dpi=300, bbox_inches='tight')
-        plt.show()
-
 def print_summary_table(df, analysis_results):
     """요약 테이블 출력"""
     
@@ -273,11 +200,7 @@ def main():
         # 4. 샘플 데이터 미리보기
         create_sample_preview(upper_body_df)
         
-        # 5. 시각화 생성
-        logging.info("시각화 생성 중...")
-        create_visualizations(upper_body_df)
-        
-        # 6. 상세 통계 CSV 저장
+        # 5. 통계 CSV 저장
         stats_data = []
         for label, label_stats in analysis_results['라벨별 각도 통계'].items():
             for angle, stats in label_stats.items():
@@ -297,9 +220,6 @@ def main():
         print(f"📁 생성된 파일들:")
         print(f"   • data/upper_body_data.csv - 정리된 상체 데이터")
         print(f"   • data/upper_body_statistics.csv - 통계 데이터")
-        print(f"   • data/angle_distributions.png - 각도 분포 그래프")
-        print(f"   • data/label_comparison.png - 라벨별 비교 그래프")
-        print(f"   • data/angle_correlation.png - 상관관계 히트맵")
         
     except Exception as e:
         logging.error(f"처리 중 오류 발생: {e}")
