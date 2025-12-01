@@ -1,23 +1,18 @@
 {
-  "img_height": 128,
-  "img_width": 128,
+  "img_height": 112,
+  "img_width": 112,
   "sequence_length": 5,
-  "dropout_rate": 0.4,
+  "dropout_rate": 0.35,
   "feature_columns": [
     "neck_angle",
     "shoulder_angle",
     "hip_angle",
     "torso_angle",
-    "nose_x",
-    "nose_y",
-    "left_shoulder_x",
-    "left_shoulder_y",
-    "right_shoulder_x",
-    "right_shoulder_y",
-    "left_hip_x",
-    "left_hip_y",
-    "right_hip_x",
-    "right_hip_y"
+    "shoulder_width",
+    "hip_width",
+    "torso_height",
+    "neck_length",
+    "shoulder_hip_ratio"
   ],
   "classes": [
     "abnormal",

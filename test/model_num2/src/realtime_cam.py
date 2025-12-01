@@ -21,7 +21,7 @@ logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
 
 class RealtimePostureMonitor:
     def __init__(self, model_path='models/cnn_lstm_model.h5'):
-        """실시간 자세 모니터링 시스템"""
+        """실시간 자세 모니터링 시스템 (수치 데이터만 사용)"""
         # MediaPipe 초기화
         self.mp_pose = mp.solutions.pose
         self.mp_drawing = mp.solutions.drawing_utils
@@ -38,8 +38,6 @@ class RealtimePostureMonitor:
         self.scaler = None
         self.label_encoder = None
         self.sequence_length = 5  # 기본값, 메타데이터에서 덮어씀
-        self.img_height = 128
-        self.img_width = 128
         self.feature_columns = None
         
         if Path(model_path).exists():
@@ -47,9 +45,8 @@ class RealtimePostureMonitor:
         else:
             logging.warning(f"모델 파일을 찾을 수 없습니다: {model_path}")
         
-        # 데이터 버퍼 (시퀀스용)
+        # 데이터 버퍼 (시퀀스용 - 수치 데이터만)
         self.pose_buffer = deque(maxlen=self.sequence_length)
-        self.image_buffer = deque(maxlen=self.sequence_length)
         
         # 예측 결과 저장
         self.predictions = deque(maxlen=30)  # 30프레임 평균
@@ -91,11 +88,9 @@ class RealtimePostureMonitor:
                 metadata = json.load(f)
             
             self.sequence_length = metadata['sequence_length']
-            self.img_height = metadata.get('img_height', 128)
-            self.img_width = metadata.get('img_width', 128)
             self.feature_columns = metadata['feature_columns']
             
-            logging.info(f"모델 로드 완료 (sequence_length={self.sequence_length})")
+            logging.info(f"모델 로드 완료 (sequence_length={self.sequence_length}, 수치 데이터만 사용)")
             
         except Exception as e:
             logging.error(f"모델 로드 실패: {e}")
@@ -121,6 +116,10 @@ class RealtimePostureMonitor:
             angles = self.calculate_angles(pose_data)
             pose_data.update(angles)
             
+            # 상대적 특성 계산 (shoulder_width, hip_width 등)
+            relative_features = self.calculate_relative_features(pose_data)
+            pose_data.update(relative_features)
+            
             return pose_data
             
         except Exception as e:
@@ -128,7 +127,7 @@ class RealtimePostureMonitor:
             return None
     
     def calculate_angles(self, pose_data: dict) -> dict:
-        """자세 각도 계산"""
+        """자세 각도 계산 (절대값 기반 - 좌우 위치 무관)"""
         angles = {}
         
         try:
@@ -142,39 +141,38 @@ class RealtimePostureMonitor:
             shoulder_center_x = (left_shoulder_x + right_shoulder_x) / 2
             shoulder_center_y = (left_shoulder_y + right_shoulder_y) / 2
             
-            neck_angle = np.degrees(np.arctan2(
-                nose_x - shoulder_center_x,
-                shoulder_center_y - nose_y
-            ))
+            # 목 기울기: y축 차이만 고려 (수직 방향 기울기)
+            y_diff = shoulder_center_y - nose_y
+            x_diff_abs = abs(nose_x - shoulder_center_x)
+            neck_angle = np.degrees(np.arctan2(x_diff_abs, y_diff))
             angles['neck_angle'] = neck_angle
             
-            # 어깨 기울기
-            shoulder_angle = np.degrees(np.arctan2(
+            # 어깨 기울기: 절대값으로 좌우 대칭 처리
+            shoulder_angle = abs(np.degrees(np.arctan2(
                 right_shoulder_y - left_shoulder_y,
                 right_shoulder_x - left_shoulder_x
-            ))
+            )))
             angles['shoulder_angle'] = shoulder_angle
             
-            # 허리 기울기
+            # 허리 기울기: 절대값으로 좌우 대칭 처리
             left_hip_x = pose_data['left_hip_x']
             left_hip_y = pose_data['left_hip_y']
             right_hip_x = pose_data['right_hip_x']
             right_hip_y = pose_data['right_hip_y']
             
-            hip_angle = np.degrees(np.arctan2(
+            hip_angle = abs(np.degrees(np.arctan2(
                 right_hip_y - left_hip_y,
                 right_hip_x - left_hip_x
-            ))
+            )))
             angles['hip_angle'] = hip_angle
             
-            # 상체 전체 기울기
+            # 상체 전체 기울기: y축 차이만 고려 (수직 방향 기울기)
             hip_center_x = (left_hip_x + right_hip_x) / 2
             hip_center_y = (left_hip_y + right_hip_y) / 2
             
-            torso_angle = np.degrees(np.arctan2(
-                shoulder_center_x - hip_center_x,
-                hip_center_y - shoulder_center_y
-            ))
+            y_diff = hip_center_y - shoulder_center_y
+            x_diff_abs = abs(shoulder_center_x - hip_center_x)
+            torso_angle = np.degrees(np.arctan2(x_diff_abs, y_diff))
             angles['torso_angle'] = torso_angle
             
         except Exception as e:
@@ -188,9 +186,54 @@ class RealtimePostureMonitor:
         
         return angles
     
-    def predict_posture(self, pose_data: dict, frame: np.ndarray) -> dict:
-        """자세 예측 (이미지 + 수치 데이터)"""
-        if self.model is None or not pose_data or frame is None:
+    def calculate_relative_features(self, pose_data: dict) -> dict:
+        """상대적 특성 계산 (거리, 비율 등) - 위치 무관"""
+        features = {}
+        
+        try:
+            # 어깨 너비
+            shoulder_width = abs(pose_data['right_shoulder_x'] - pose_data['left_shoulder_x'])
+            features['shoulder_width'] = shoulder_width
+            
+            # 엉덩이 너비
+            hip_width = abs(pose_data['right_hip_x'] - pose_data['left_hip_x'])
+            features['hip_width'] = hip_width
+            
+            # 상체 높이 (어깨 중심 - 엉덩이 중심)
+            shoulder_center_y = (pose_data['left_shoulder_y'] + pose_data['right_shoulder_y']) / 2
+            hip_center_y = (pose_data['left_hip_y'] + pose_data['right_hip_y']) / 2
+            torso_height = abs(hip_center_y - shoulder_center_y)
+            features['torso_height'] = torso_height
+            
+            # 목 길이 (코 - 어깨 중심)
+            shoulder_center_x = (pose_data['left_shoulder_x'] + pose_data['right_shoulder_x']) / 2
+            neck_length = np.sqrt(
+                (pose_data['nose_x'] - shoulder_center_x)**2 +
+                (pose_data['nose_y'] - shoulder_center_y)**2
+            )
+            features['neck_length'] = neck_length
+            
+            # 비율 계산
+            if hip_width > 0:
+                features['shoulder_hip_ratio'] = shoulder_width / hip_width
+            else:
+                features['shoulder_hip_ratio'] = 1.0
+                
+        except Exception as e:
+            logging.error(f"상대적 특성 계산 실패: {e}")
+            features = {
+                'shoulder_width': 0.0,
+                'hip_width': 0.0,
+                'torso_height': 0.0,
+                'neck_length': 0.0,
+                'shoulder_hip_ratio': 1.0
+            }
+        
+        return features
+    
+    def predict_posture(self, pose_data: dict) -> dict:
+        """자세 예측 (수치 데이터만 사용)"""
+        if self.model is None or not pose_data:
             return {'predicted_class': 'unknown', 'confidence': 0.0}
         
         try:
@@ -204,41 +247,39 @@ class RealtimePostureMonitor:
             
             feature_vector = np.array(feature_vector).reshape(1, -1)
             
-            # 이미지 전처리
-            img_resized = cv2.resize(frame, (self.img_width, self.img_height), 
-                                    interpolation=cv2.INTER_AREA)
-            img_normalized = img_resized.astype(np.float32) / 255.0
-            
             # 버퍼에 추가
             self.pose_buffer.append(feature_vector[0])
-            self.image_buffer.append(img_normalized)
             
             # 시퀀스가 충분히 쌓이지 않았으면 대기
-            if len(self.pose_buffer) < self.sequence_length or len(self.image_buffer) < self.sequence_length:
+            if len(self.pose_buffer) < self.sequence_length:
                 return {'predicted_class': 'unknown', 'confidence': 0.0}
-            
-            # 이미지 시퀀스 생성
-            img_sequence = np.array(list(self.image_buffer))
-            img_sequence = img_sequence.reshape(1, self.sequence_length, 
-                                               self.img_height, self.img_width, 3)
             
             # 수치 시퀀스 생성
             num_sequence = np.array(list(self.pose_buffer))
             num_sequence_scaled = self.scaler.transform(num_sequence)
             num_sequence_input = num_sequence_scaled.reshape(1, self.sequence_length, -1)
             
-            # 예측 (이미지 + 수치 데이터)
+            # 예측 (수치 데이터만)
             prediction_proba = self.model.predict(
-                [img_sequence, num_sequence_input], 
+                num_sequence_input, 
                 verbose=0
             )[0]
             predicted_class_idx = np.argmax(prediction_proba)
             predicted_class = self.label_encoder.inverse_transform([predicted_class_idx])[0]
             confidence = prediction_proba[predicted_class_idx]
             
+            # 신뢰도를 백분율로 변환 (0~100)
+            confidence_percentage = float(confidence * 100)
+            
+            # 95 이상: Good (normal), 95 미만: Bad (abnormal)
+            if confidence_percentage >= 95:
+                final_class = 'normal'
+            else:
+                final_class = 'abnormal'
+            
             return {
-                'predicted_class': predicted_class,
-                'confidence': float(confidence)
+                'predicted_class': final_class,
+                'confidence': confidence_percentage  # 백분율로 반환
             }
             
         except Exception as e:
@@ -304,26 +345,25 @@ class RealtimePostureMonitor:
         cv2.putText(image, status_text, (20, 40), 
                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 2)
         
-        # 신뢰도
-        confidence_text = f"Confidence: {self.confidence:.2f}"
+        # 신뢰도 (백분율)
+        confidence_text = f"Score: {self.confidence:.1f}%"
         cv2.putText(image, confidence_text, (20, 70), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         
-        # 상태 메시지
-        if self.current_posture.lower() == 'abnormal' and self.confidence > 0.7:
-            message = "Please correct your posture!"
-            cv2.putText(image, message, (20, 100), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-        elif self.current_posture.lower() == 'normal':
-            message = "Good posture!"
+        # 상태 메시지 (95 이상 Good, 미만 Bad)
+        if self.confidence >= 95:
+            message = "GOOD - Excellent Posture!"
             cv2.putText(image, message, (20, 100), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        else:
+            message = "BAD - Adjust Posture!"
+            cv2.putText(image, message, (20, 100), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
     
     def should_alert(self) -> bool:
-        """알림이 필요한지 확인"""
+        """알림이 필요한지 확인 (95 미만일 때)"""
         current_time = time.time()
-        if (self.current_posture.lower() == 'abnormal' and 
-            self.confidence > 0.8 and 
+        if (self.confidence < 95 and 
             current_time - self.last_alert_time > self.alert_interval):
             self.last_alert_time = current_time
             return True
@@ -364,8 +404,8 @@ class RealtimePostureMonitor:
                 pose_data = self.extract_pose_features(results.pose_landmarks, frame.shape)
                 
                 if pose_data:
-                    # 자세 예측 (이미지 + 수치 데이터)
-                    prediction = self.predict_posture(pose_data, rgb_frame)
+                    # 자세 예측 (수치 데이터만)
+                    prediction = self.predict_posture(pose_data)
                     self.smooth_predictions(prediction)
                     
                     # 알림 확인
@@ -395,7 +435,6 @@ class RealtimePostureMonitor:
                     break
                 elif key == ord('r'):  # R 키로 리셋
                     self.pose_buffer.clear()
-                    self.image_buffer.clear()
                     self.predictions.clear()
                     self.current_posture = "Unknown"
                     self.confidence = 0.0
