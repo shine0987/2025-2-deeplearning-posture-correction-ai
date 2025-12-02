@@ -13,14 +13,15 @@ from pathlib import Path
 import logging
 import time
 from collections import deque
-import argparse
 import json
+import os
+import joblib
 
 # 로깅 설정
 logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
 
 class RealtimePostureMonitor:
-    def __init__(self, model_path='models/cnn_lstm_model.h5'):
+    def __init__(self, model_path='models/cnn_lstm_model.h5', scaler_path='models/scaler_cnn_lstm.pkl'):
         """실시간 자세 모니터링 시스템"""
         # MediaPipe 초기화
         self.mp_pose = mp.solutions.pose
@@ -33,17 +34,24 @@ class RealtimePostureMonitor:
             model_complexity=1
         )
         
-        # 모델 로드
+        # 모델 및 데이터 관련 변수 초기화
         self.model = None
         self.scaler = None
         self.label_encoder = None
         self.sequence_length = 10
         self.feature_columns = None
+        self.preprocessor = None
         
         if Path(model_path).exists():
             self.load_model(model_path)
         else:
             logging.warning(f"모델 파일을 찾을 수 없습니다: {model_path}")
+            
+        # [추가] 스케일러 경로
+        if Path(scaler_path).exists():
+            self.load_model(scaler_path)
+        else:
+            logging.warning(f"스케일러 파일을 찾을 수 없습니다: {scaler_path}")
         
         # 데이터 버퍼 (시퀀스용)
         self.pose_buffer = deque(maxlen=self.sequence_length)
@@ -72,28 +80,56 @@ class RealtimePostureMonitor:
             'abnormal': (0, 0, 255),    # 빨간색
             'unknown': (128, 128, 128)  # 회색
         }
-    
-    def load_model(self, model_path):
-        """저장된 모델 로드"""
+        
+        
+    def load_model(self, model_path_arg=None):
+        """저장된 모델 로드 (경로 완전 자동화 버전)"""
         try:
-            import joblib
+            # 1. 경로 기준점 잡기 (현재 파일 위치 기준)
+            # .../test/model_num2/src/realtime_cam.py
+            current_file = os.path.abspath(__file__)
+            src_dir = os.path.dirname(current_file)           # .../src
+            model_num2_dir = os.path.dirname(src_dir)         # .../model_num2
+            models_dir = os.path.join(model_num2_dir, 'models') # .../model_num2/models
+
+            logging.info(f"📂 모델 폴더 탐색 경로: {models_dir}")
+
+            # 2. 파일 경로 확정
+            if model_path_arg and os.path.isabs(model_path_arg):
+                h5_path = model_path_arg
+            else:
+                h5_path = os.path.join(models_dir, 'cnn_lstm_model.h5')
+
+            scaler_path = os.path.join(models_dir, 'scaler_cnn_lstm.pkl')
+            label_path = os.path.join(models_dir, 'label_encoder_cnn_lstm.pkl')
+            meta_path = os.path.join(models_dir, 'model_metadata_cnn_lstm.json')
+
+            # 3. 파일 존재 확인
+            if not os.path.exists(h5_path):
+                raise FileNotFoundError(f"모델 파일 없음: {h5_path}")
+
+            # 4. 로드 실행
+            self.model = tf.keras.models.load_model(h5_path)
+            self.scaler = joblib.load(scaler_path)
+            self.label_encoder = joblib.load(label_path)
             
-            self.model = tf.keras.models.load_model(model_path)
-            self.scaler = joblib.load('models/scaler.pkl')
-            self.label_encoder = joblib.load('models/label_encoder.pkl')
-            
-            # 메타데이터 로드
-            with open('models/model_metadata.json', 'r') as f:
+            with open(meta_path, 'r') as f:
                 metadata = json.load(f)
             
             self.sequence_length = metadata['sequence_length']
             self.feature_columns = metadata['feature_columns']
             
-            logging.info("모델 로드 완료")
+            # 버퍼 크기 재설정
+            self.pose_buffer = deque(maxlen=self.sequence_length)
             
+            logging.info(f"✅ 모델 및 메타데이터 로드 완료!")
+            return True
+
         except Exception as e:
-            logging.error(f"모델 로드 실패: {e}")
+            logging.error(f"❌ 모델 로드 실패: {e}")
             self.model = None
+            return False
+    
     
     def extract_pose_features(self, landmarks, image_shape) -> dict:
         """포즈 랜드마크에서 특성 추출"""
@@ -307,85 +343,70 @@ class RealtimePostureMonitor:
             return True
         return False
     
-    def run(self, camera_id=0, show_window=True):
-        """실시간 모니터링 실행"""
-        cap = cv2.VideoCapture(camera_id)
-        if not cap.isOpened():
-            logging.error(f"카메라를 열 수 없습니다: {camera_id}")
-            return
-        
-        # 카메라 설정
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        cap.set(cv2.CAP_PROP_FPS, 30)
-        
-        logging.info("실시간 자세 모니터링 시작 (ESC키로 종료)")
-        
-        fps_counter = 0
-        fps_start_time = time.time()
-        
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                logging.error("프레임을 읽을 수 없습니다")
-                break
-            
-            # 좌우 반전 (거울 효과)
-            frame = cv2.flip(frame, 1)
-            
-            # MediaPipe 처리
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = self.pose.process(rgb_frame)
-            
-            # 포즈 특성 추출
-            if results.pose_landmarks:
-                pose_data = self.extract_pose_features(results.pose_landmarks, frame.shape)
-                
-                if pose_data:
-                    # 자세 예측
-                    prediction = self.predict_posture(pose_data)
-                    self.smooth_predictions(prediction)
-                    
-                    # 알림 확인
-                    if self.should_alert():
-                        logging.info("⚠️  자세 교정이 필요합니다!")
-                
-                # 랜드마크 그리기
-                self.draw_pose_landmarks(frame, results.pose_landmarks)
-            
-            # 상태 정보 표시
-            self.draw_status_info(frame)
-            
-            # FPS 계산
-            fps_counter += 1
-            if fps_counter % 30 == 0:
-                fps = 30 / (time.time() - fps_start_time)
-                fps_start_time = time.time()
-                cv2.putText(frame, f"FPS: {fps:.1f}", (frame.shape[1]-120, 30), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            
-            # 화면 표시
-            if show_window:
-                cv2.imshow('Posture Monitor', frame)
-                
-                key = cv2.waitKey(1) & 0xFF
-                if key == 27:  # ESC 키
-                    break
-                elif key == ord('r'):  # R 키로 리셋
-                    self.pose_buffer.clear()
-                    self.predictions.clear()
-                    self.current_posture = "Unknown"
-                    self.confidence = 0.0
-                    logging.info("시스템 리셋")
-        
-        cap.release()
-        cv2.destroyAllWindows()
-        logging.info("실시간 모니터링 종료")
     
-    def __del__(self):
-        """소멸자"""
-        if hasattr(self, 'pose'):
-            self.pose.close()
+    def process_frame(self, frame):
+        """
+        [통합 예측 함수]
+        이미지 프레임 -> 전처리 -> 예측 -> 결과 반환
+        """
+        if self.model is None:
+            return {'predicted_class': 'Loading...', 'confidence': 0.0}
+
+        try:
+            # --- 1. CNN 입력 준비 (이미지) ---
+            # 학습 시 사용한 이미지 크기 (cnn_lstm_model.py 참고, 보통 128 또는 224)
+            IMG_SIZE = 128 
+            
+            img_resized = cv2.resize(frame, (IMG_SIZE, IMG_SIZE))
+            img_normalized = img_resized / 255.0
+            cnn_input = np.expand_dims(img_normalized, axis=0) # (1, 128, 128, 3)
+
+            # --- 2. LSTM 입력 준비 (시퀀스) ---
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = self.pose.process(frame_rgb)
+            
+            if not results.pose_landmarks:
+                return {'predicted_class': 'No Pose', 'confidence': 0.0}
+
+            # 랜드마크 -> 특징 벡터 추출
+            landmarks = results.pose_landmarks.landmark
+            angles_dict = self.preprocessor.calculate_angles(landmarks) # preprocessing 사용
+            
+            feature_vector = []
+            for col in self.feature_columns:
+                if col in angles_dict:
+                    feature_vector.append(angles_dict[col])
+                else:
+                    feature_vector.append(0.0) # 좌표값 등은 0 처리 혹은 추가 로직 구현
+
+            # 버퍼에 추가
+            self.pose_buffer.append(feature_vector)
+            
+            # 시퀀스가 아직 덜 찼으면 대기
+            if len(self.pose_buffer) < self.sequence_length:
+                return {'predicted_class': 'Initializing...', 'confidence': 0.0}
+            
+            # 시퀀스 데이터 변환
+            seq_data = list(self.pose_buffer)
+            seq_scaled = self.scaler.transform(seq_data)
+            lstm_input = np.expand_dims(seq_scaled, axis=0) # (1, seq_len, features)
+
+            # --- 3. 듀얼 인풋 예측 ---
+            # [주의] 모델 학습 시 Input 순서가 [img_input, num_input] 인지 확인 필요
+            prediction = self.model.predict([cnn_input, lstm_input], verbose=0)
+            
+            label_idx = np.argmax(prediction[0])
+            confidence = prediction[0][label_idx]
+            predicted_class = self.label_encoder.classes_[label_idx]
+
+            return {
+                'predicted_class': predicted_class,
+                'confidence': float(confidence)
+            }
+
+        except Exception as e:
+            # 여기서 에러는 monitor_thread에서 잡아서 스로틀링함
+            raise e
 
 
 def main():

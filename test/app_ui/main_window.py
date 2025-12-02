@@ -1,5 +1,4 @@
-from PyQt6.QtWidgets import QMainWindow, QTabWidget
-from PyQt6.QtGui import QIcon
+
 from pathlib import Path
 
 # UI 탭 임포트
@@ -9,8 +8,12 @@ from app_ui.tabs.profile_tab import ProfileTab
 from app_ui.tabs.tutorial_tab import TutorialTab
 
 # 스레드 및 데이터 관리 임포트
-from app_ui.monitor_thread_mock import MonitorThread
+from app_ui.monitor_thread import MonitorThread
+# from app_ui.monitor_thread_mock import MonitorThread
 import app_ui.data_manager as data_manager
+
+from PyQt6.QtWidgets import QMainWindow, QTabWidget
+from PyQt6.QtGui import QIcon
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -50,8 +53,8 @@ class MainWindow(QMainWindow):
 
     def connect_signals(self):
         # 1. 모니터 탭의 버튼 -> 메인 윈도우의 스레드 제어 함수
-        self.monitor_tab.start_button.clicked.connect(self.start_monitoring)
-        self.monitor_tab.stop_button.clicked.connect(self.stop_monitoring)
+        self.monitor_tab.start_button.clicked.connect(self.start_monitoring) # 시작 버튼
+        self.monitor_tab.stop_button.clicked.connect(self.stop_monitoring) # 종료 버튼
         
         # 2. 스레드의 시그널 -> 모니터 탭의 UI 업데이트 슬롯
         self.monitor_thread.frame_ready.connect(self.monitor_tab.update_frame)
@@ -61,17 +64,21 @@ class MainWindow(QMainWindow):
         # 3. 스레드의 타이머 시그널 -> 메인 윈도우의 세션 데이터 업데이트
         self.monitor_thread.timer_updated.connect(self.update_session_data)
 
+    # 실시간 캠 출력 시작
     def start_monitoring(self):
-        print("메인: 모니터링 시작")
-        self.monitor_tab.start_button.setEnabled(False)
-        self.monitor_tab.stop_button.setEnabled(True)
+        print("메인: 모니터링 시작 요청")
         
-        # 스레드 시작
+        # [NEW] 로딩 상태 UI 표시 (사용자에게 피드백 제공)
+        self.monitor_tab.set_loading_state()
+        
+        # 스레드 시작 (모델 로드 및 카메라 연결)
         if not self.monitor_thread.isRunning():
             self.monitor_thread.start()
-        
-        self.monitor_tab.current_posture_label.setText("측정 중...")
+            
+        # 버튼 상태는 set_loading_state에서 이미 비활성화 처리됨
+        # update_frame 시그널이 오면 자동으로 stop 버튼 활성화됨
 
+    # 실시간 캠 출력 종료
     def stop_monitoring(self):
         print("메인: 모니터링 중지")
         if self.monitor_thread.isRunning():

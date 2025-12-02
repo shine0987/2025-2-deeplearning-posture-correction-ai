@@ -1,215 +1,144 @@
 import cv2
 import numpy as np
-import tensorflow as tf
-import joblib
-import json
 import time
 import sys
-import os # os.path.join을 위해 임포트
+import os 
+import logging
 from PyQt6.QtCore import QThread, pyqtSignal
 
-# --- [중요] ---
-# main.py에서 sys.path.append(루트폴더)를 실행했기 때문에
-# 루트/src/preprocessing.py 임포트가 가능합니다.
+# --- [경로 설정] ---
+# 현재 파일: .../test/app_ui/monitor_thread.py
+current_dir = os.path.dirname(os.path.abspath(__file__)) 
+test_dir = os.path.dirname(current_dir) # test 폴더
+
+if test_dir not in sys.path:
+    sys.path.append(test_dir)
+
+# --- [Import] ---
 try:
-    from src.preprocessing import PosePreprocessor
+    from model_num2.src.realtime_cam import RealtimePostureMonitor
+    print("✅ RealtimePostureMonitor 모듈 로드 성공")
 except ImportError as e:
-    print(f"오류: src.preprocessing를 임포트할 수 없습니다. (에러: {e})")
-    print("main.py가 올바른 sys.path를 설정했는지 확인하세요.")
-    sys.exit(1)
-
-
-# --- 모델 및 파일 경로 ---
-# main.py에서 os.chdir(루트폴더)를 실행했기 때문에
-# 루트 폴더 기준으로 상대 경로를 작성합니다.
-MODELS_DIR = "models"
-MODEL_PATH = os.path.join(MODELS_DIR, 'cnn_lstm_model.h5')
-SCALER_PATH = os.path.join(MODELS_DIR, 'scaler.pkl')
-ENCODER_PATH = os.path.join(MODELS_DIR, 'label_encoder.pkl')
-METADATA_PATH = os.path.join(MODELS_DIR, 'model_metadata.json')
-
+    print(f"⚠️ 모듈 로드 실패: {e}")
+    sys.path.append(os.path.join(test_dir, 'model_num2'))
+    try:
+        from model_num2.src.realtime_cam import RealtimePostureMonitor
+    except Exception as e2:
+        print(f"❌ 치명적 오류: {e2}")
 
 class MonitorThread(QThread):
     """
     웹캠 피드 처리 및 자세 추론을 담당하는 QThread
-    GUI가 멈추는 것을 방지합니다.
     """
-    # GUI로 보낼 시그널 정의
-    frame_ready = pyqtSignal(np.ndarray)  # 비디오 프레임
-    posture_status = pyqtSignal(str)      # 자세 상태 (e.g., "normal", "abnormal")
+    # GUI로 보낼 시그널
+    frame_ready = pyqtSignal(np.ndarray)  # 영상 프레임
+    posture_status = pyqtSignal(str)      # 자세 상태 텍스트
     timer_updated = pyqtSignal(int, int)  # (총 시간, 바른 자세 시간)
     
     def __init__(self):
         super().__init__()
         self._is_running = False
         self.cap = None
+        self.monitor = None  # RealtimePostureMonitor 객체
         
+        # 타이머 관련 변수
         self.total_time_sec = 0
         self.correct_time_sec = 0
         self.start_time = None
         
-        self.model = None
-        self.scaler = None
-        self.label_encoder = None
-        self.metadata = None
-        self.preprocessor = None
-        
-        self.sequence_data = []
-        self.sequence_length = 10 # 기본값, 메타데이터에서 덮어씀
-        self.feature_columns = []
-
-    def load_models(self):
-        """딥러닝 모델과 전처리기 로드"""
-        try:
-            self.model = tf.keras.models.load_model(MODEL_PATH)
-            self.scaler = joblib.load(SCALER_PATH)
-            self.label_encoder = joblib.load(ENCODER_PATH)
-            
-            with open(METADATA_PATH, 'r') as f:
-                self.metadata = json.load(f)
-            
-            self.sequence_length = self.metadata['sequence_length']
-            self.feature_columns = self.metadata['feature_columns']
-            
-            # MediaPipe Pose 초기화를 포함한 전처리기 (src.preprocessing)
-            self.preprocessor = PosePreprocessor()
-            
-            print("모델 및 전처리기 로드 완료")
-            return True
-        except Exception as e:
-            print(f"모델 로드 오류: {e}")
-            print(f"필요한 파일({MODEL_PATH}, {SCALER_PATH}, {ENCODER_PATH}, {METADATA_PATH})이 {MODELS_DIR} 폴더에 있는지 확인하세요.")
-            return False
+        # 에러 로그 도배 방지
+        self.last_error_time = 0  
+        self.error_log_interval = 3.0
 
     def run(self):
-        if not self.load_models():
-            self._is_running = False
-            return # 모델 로드 실패 시 스레드 종료
-
-        self._is_running = True
-        self.cap = cv2.VideoCapture(0) # 0번 카메라
+        logging.info("모니터링 스레드 시작")
         
+        # 1. 절대 경로 계산 (test/model_num2/models 기준)
+        model_base_dir = os.path.join(test_dir, 'model_num2', 'models')
+        abs_model_path = os.path.join(model_base_dir, 'cnn_lstm_model.h5')
+        abs_scaler_path = os.path.join(model_base_dir, 'scaler_cnn_lstm.pkl')
+        
+        # 2. 모니터링 객체 생성 (여기서만 모델을 로드합니다)
+        if self.monitor is None:
+            try:
+                logging.info(f"모델 로드 시도: {abs_model_path}")
+                # [중요] 키워드 인자(model_path=...)를 명시하여 순서가 바뀌는 실수를 방지합니다.
+                self.monitor = RealtimePostureMonitor(
+                    model_path=abs_model_path,
+                    scaler_path=abs_scaler_path
+                )
+            except Exception as e:
+                logging.error(f"❌ 모델 초기화 실패: {e}")
+                return # 모델 없으면 스레드 종료
+
+        # 3. 카메라 연결
+        self.cap = cv2.VideoCapture(0)
         if not self.cap.isOpened():
-            print("오류: 카메라를 열 수 없습니다.")
-            self._is_running = False
+            logging.error("카메라를 열 수 없습니다.")
             return
 
-        self.total_time_sec = 0
-        self.correct_time_sec = 0
-        self.sequence_data = []
+        self._is_running = True
         self.start_time = time.time()
         last_timer_update = time.time()
-
-        current_posture = "대기 중"
+        
+        current_posture = "Ready"
 
         while self._is_running:
             ret, frame = self.cap.read()
             if not ret:
                 break
             
-            frame = cv2.flip(frame, 1) # 좌우 반전
+            # 거울 모드 (좌우 반전)
+            frame = cv2.flip(frame, 1)
 
-            # --- 실제 모델 추론 ---
+            # 4. 예측 실행 (RealtimePostureMonitor에게 위임)
             try:
-                # 1. MediaPipe로 랜드마크 추출
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                results = self.preprocessor.pose.process(frame_rgb)
-
-                feature_vector = None
+                result = self.monitor.process_frame(frame)
+                current_posture = result.get('predicted_class', 'Unknown')
                 
-                if results.pose_landmarks:
-                    landmarks = results.pose_landmarks.landmark
-                    
-                    # 2. 특징(각도, 좌표) 추출 (src.preprocessing.py의 로직 사용)
-                    angles_dict = self.preprocessor.calculate_angles(landmarks)
-                    
-                    feature_vector = []
-                    # model_metadata.json에 정의된 순서대로 특징 추출
-                    for col in self.feature_columns:
-                        if col in angles_dict:
-                            feature_vector.append(angles_dict[col])
-                        else:
-                            # (x, y 좌표 처리 - metadata에 정의된 랜드마크 기준)
-                            try:
-                                # UPPER_BODY_LANDMARKS는 preprocessing.py의 전역 변수
-                                # 이 클래스에서 직접 접근하려면 preprocessor 객체를 통해 접근해야 하나,
-                                # 현재 preprocessing.py의 UPPER_BODY_LANDMARKS는 전역 변수이므로
-                                # PosePreprocessor 클래스에 해당 변수를 멤버로 추가하는 것이 좋습니다.
-                                # (임시로 하드코딩된 이름 사용 가정)
-                                
-                                # preprocessing.py의 UPPER_BODY_LANDMARKS 딕셔너리 참조
-                                landmark_map = {
-                                    'nose': 0,
-                                    'left_shoulder': 11,
-                                    'right_shoulder': 12,
-                                    'left_hip': 23,
-                                    'right_hip': 24
-                                }
-                                
-                                lm_name, axis = col.rsplit('_', 1) # e.g., "nose_x" -> ("nose", "x")
-                                lm_index = landmark_map[lm_name]
-                                lm = landmarks[lm_index]
-                                feature_vector.append(getattr(lm, axis))
-                            except (KeyError, AttributeError, ValueError):
-                                # print(f"Warning: Cannot find feature {col}")
-                                feature_vector.append(0) # 오류 시 0으로 대체
-
-                if feature_vector and len(feature_vector) == len(self.feature_columns):
-                    # 3. 시퀀스 데이터 구성
-                    self.sequence_data.append(feature_vector)
-                    
-                    if len(self.sequence_data) == self.sequence_length:
-                        # 4. 스케일링 및 예측
-                        scaled_data = self.scaler.transform(self.sequence_data)
-                        prediction = self.model.predict(np.expand_dims(scaled_data, axis=0))
-                        label_idx = np.argmax(prediction)
-                        current_posture = self.label_encoder.classes_[label_idx]
-                        
-                        # 5. 시퀀스 데이터 슬라이딩 (가장 오래된 데이터 제거)
-                        self.sequence_data.pop(0)
-
             except Exception as e:
-                # print(f"추론 중 오류: {e}") # 디버깅용
-                pass # 오류가 발생해도 계속 실행
+                # 반복적인 에러 로그 출력 방지
+                now = time.time()
+                if now - self.last_error_time > self.error_log_interval:
+                    logging.error(f"예측 중 오류: {e}")
+                    self.last_error_time = now
+                pass
 
-            # --- 추론 종료 ---
+            # 5. 화면에 텍스트 그리기 (간단 상태 표시)
+            if current_posture == "normal":
+                color = (0, 255, 0) # Green
+            elif current_posture == "abnormal":
+                color = (0, 0, 255) # Red
+            else:
+                color = (200, 200, 200) # Gray
 
-            # 프레임에 현재 상태 표시
-            display_text = f"Status: {current_posture}"
-            color = (0, 255, 0) if current_posture == "normal" else (0, 0, 255)
-            cv2.putText(frame, display_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+            cv2.putText(frame, f"Status: {current_posture}", (10, 50), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
             
-            # GUI로 프레임 전송 (BGR 포맷 그대로)
+            # 6. GUI로 데이터 전송
             self.frame_ready.emit(frame)
-            
-            # GUI로 자세 상태 전송
             self.posture_status.emit(current_posture)
             
-            # 타이머 업데이트 (1초마다)
-            current_time = time.time()
-            if current_time - last_timer_update >= 1.0:
-                elapsed_since_start = current_time - self.start_time
-                self.total_time_sec = int(elapsed_since_start)
+            # 7. 타이머 로직 (1초마다 업데이트)
+            cur_time = time.time()
+            if cur_time - last_timer_update >= 1.0:
+                elapsed = cur_time - self.start_time
+                self.total_time_sec = int(elapsed)
                 
                 if current_posture == "normal":
-                    self.correct_time_sec += 1 
+                    self.correct_time_sec += 1
                 
                 self.timer_updated.emit(self.total_time_sec, self.correct_time_sec)
-                last_timer_update = current_time
+                last_timer_update = cur_time
 
-            # CPU 사용량 조절 (약 30fps)
+            # CPU 점유율 조절 (약 30 FPS)
             time.sleep(0.03)
 
-        # 스레드 종료 시 카메라 해제
+        # 종료 처리
         if self.cap:
             self.cap.release()
-            self.cap = None
-        
-        # MediaPipe 리소스 해제
-        if self.preprocessor and hasattr(self.preprocessor, 'pose'):
-            self.preprocessor.pose.close()
-            
-        print("모니터링 스레드 종료됨")
+            logging.info("카메라 해제 완료")
 
     def stop(self):
         self._is_running = False
+        self.wait()
