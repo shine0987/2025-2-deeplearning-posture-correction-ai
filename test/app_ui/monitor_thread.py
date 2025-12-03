@@ -6,10 +6,8 @@ import os
 import logging
 from PyQt6.QtCore import QThread, pyqtSignal
 
-# --- [경로 설정] ---
-# 현재 파일: .../test/app_ui/monitor_thread.py
 current_dir = os.path.dirname(os.path.abspath(__file__)) 
-test_dir = os.path.dirname(current_dir) # test 폴더
+test_dir = os.path.dirname(current_dir) 
 
 if test_dir not in sys.path:
     sys.path.append(test_dir)
@@ -30,7 +28,6 @@ class MonitorThread(QThread):
     """
     웹캠 피드 처리 및 자세 추론을 담당하는 QThread
     """
-    # GUI로 보낼 시그널
     frame_ready = pyqtSignal(np.ndarray)  # 영상 프레임
     posture_status = pyqtSignal(str)      # 자세 상태 텍스트
     timer_updated = pyqtSignal(int, int)  # (총 시간, 바른 자세 시간)
@@ -39,7 +36,7 @@ class MonitorThread(QThread):
         super().__init__()
         self._is_running = False
         self.cap = None
-        self.monitor = None  # RealtimePostureMonitor 객체
+        self.monitor = None
         
         # 타이머 관련 변수
         self.total_time_sec = 0
@@ -53,25 +50,54 @@ class MonitorThread(QThread):
     def run(self):
         logging.info("모니터링 스레드 시작")
         
-        # 1. 절대 경로 계산 (test/model_num2/models 기준)
-        model_base_dir = os.path.join(test_dir, 'model_num2', 'models')
-        abs_model_path = os.path.join(model_base_dir, 'cnn_lstm_model.h5')
-        abs_scaler_path = os.path.join(model_base_dir, 'scaler_cnn_lstm.pkl')
+        model_base_dir = "models"
         
-        # 2. 모니터링 객체 생성 (여기서만 모델을 로드합니다)
+        # .h5 파일 (모델)
+        h5_file = "best_cnn_lstm_model.h5" 
+        # .pkl 파일 (스케일러)
+        scaler_file = "scaler_cnn_lstm.pkl"
+        
+        # 가이드에 명시된 정확한 파일명 적용
+        model_filename = 'best_cnn_lstm_model.h5'      
+        scaler_filename = 'scaler_cnn_lstm.pkl'        
+        label_filename = 'label_encoder_cnn_lstm.pkl'  
+        meta_filename = 'model_metadata_cnn_lstm.json' 
+
+        # 절대 경로 생성
+        abs_model_path = os.path.abspath(os.path.join(model_base_dir, h5_file))
+        abs_scaler_path = os.path.abspath(os.path.join(model_base_dir, scaler_file))
+        abs_label_path = os.path.abspath(os.path.join(model_base_dir, label_filename))
+        abs_meta_path = os.path.abspath(os.path.join(model_base_dir, meta_filename))
+        
+        # 2. 필수 파일 존재 여부 체크
+        missing_files = []
+        if not os.path.exists(abs_model_path): missing_files.append(model_filename)
+        if not os.path.exists(abs_scaler_path): missing_files.append(scaler_filename)
+        if not os.path.exists(abs_label_path): missing_files.append(label_filename)
+        if not os.path.exists(abs_meta_path): missing_files.append(meta_filename)
+
+        if missing_files:
+            logging.error(f"필수 모델 파일이 누락되었습니다: {missing_files}")
+            logging.error(f"현재 위치에서 'models' 폴더를 찾을 수 없습니다. (현재위치: {os.getcwd()})")
+            return # 파일이 없으면 시작하지 않음
+
+        # 3. 모니터링 객체 생성
         if self.monitor is None:
             try:
                 logging.info(f"모델 로드 시도: {abs_model_path}")
-                # [중요] 키워드 인자(model_path=...)를 명시하여 순서가 바뀌는 실수를 방지합니다.
+                
+                # 키워드 인자(model_path=...)를 명시
                 self.monitor = RealtimePostureMonitor(
                     model_path=abs_model_path,
                     scaler_path=abs_scaler_path
                 )
+                logging.info("✅ 모델 및 전처리기 초기화 성공")
+                
             except Exception as e:
                 logging.error(f"❌ 모델 초기화 실패: {e}")
-                return # 모델 없으면 스레드 종료
+                return
 
-        # 3. 카메라 연결
+        # 4. 카메라 연결
         self.cap = cv2.VideoCapture(0)
         if not self.cap.isOpened():
             logging.error("카메라를 열 수 없습니다.")
@@ -88,23 +114,22 @@ class MonitorThread(QThread):
             if not ret:
                 break
             
-            # 거울 모드 (좌우 반전)
+            # 거울 모드
             frame = cv2.flip(frame, 1)
 
-            # 4. 예측 실행 (RealtimePostureMonitor에게 위임)
+            # 5. 예측 실행
             try:
                 result = self.monitor.process_frame(frame)
                 current_posture = result.get('predicted_class', 'Unknown')
                 
             except Exception as e:
-                # 반복적인 에러 로그 출력 방지
                 now = time.time()
                 if now - self.last_error_time > self.error_log_interval:
                     logging.error(f"예측 중 오류: {e}")
                     self.last_error_time = now
                 pass
 
-            # 5. 화면에 텍스트 그리기 (간단 상태 표시)
+            # 6. 화면 텍스트 (디버깅용, 실제 UI는 Qt에서 처리)
             if current_posture == "normal":
                 color = (0, 255, 0) # Green
             elif current_posture == "abnormal":
@@ -115,11 +140,11 @@ class MonitorThread(QThread):
             cv2.putText(frame, f"Status: {current_posture}", (10, 50), 
                         cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
             
-            # 6. GUI로 데이터 전송
+            # 7. GUI 전송
             self.frame_ready.emit(frame)
             self.posture_status.emit(current_posture)
             
-            # 7. 타이머 로직 (1초마다 업데이트)
+            # 타이머
             cur_time = time.time()
             if cur_time - last_timer_update >= 1.0:
                 elapsed = cur_time - self.start_time
@@ -131,13 +156,12 @@ class MonitorThread(QThread):
                 self.timer_updated.emit(self.total_time_sec, self.correct_time_sec)
                 last_timer_update = cur_time
 
-            # CPU 점유율 조절 (약 30 FPS)
             time.sleep(0.03)
 
         # 종료 처리
         if self.cap:
             self.cap.release()
-            logging.info("카메라 해제 완료")
+            logging.info("카메라 해제")
 
     def stop(self):
         self._is_running = False

@@ -1,244 +1,223 @@
+import cv2
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
-    QFrame, QFormLayout
+    QFrame, QProgressBar, QGridLayout
 )
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap, QImage, QFont, QColor
-
-# data_manager에서 format_time, load_profile 함수 임포트
-from app_ui.data_manager import format_time, load_profile
+from app_ui.data_manager import format_time
 
 class MonitorTab(QWidget):
-    """
-    자세 측정 탭 UI
-    """
     def __init__(self):
         super().__init__()
         self.init_ui()
 
     def init_ui(self):
+        # 전체 레이아웃 (좌: 카메라 / 우: 대시보드)
         main_layout = QHBoxLayout(self)
+        main_layout.setSpacing(20)
+        main_layout.setContentsMargins(20, 20, 20, 20)
         
-        # 좌측: 비디오 피드 및 컨트롤
-        left_layout = QVBoxLayout()
-        left_layout.setSpacing(15)
+        # --- [LEFT] 카메라 영역 ---
+        cam_container = QFrame()
+        cam_container.setStyleSheet("background: black; border-radius: 15px;")
+        cam_layout = QVBoxLayout(cam_container)
+        cam_layout.setContentsMargins(0, 0, 0, 0)
         
-        # --- [수정] 비디오 라벨 스타일 강화 ---
-        self.video_label = QLabel("웹캠 피드를 여기에 표시합니다.")
-        self.video_label.setObjectName("VideoLabel") 
+        self.video_label = QLabel("Loading Camera...")
         self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.video_label.setFixedSize(640, 480)
-        # 기본 배경색 지정 (로딩 텍스트가 잘 보이게)
-        self.video_label.setStyleSheet("background-color: #000; color: #fff; font-size: 16px;")
+        self.video_label.setStyleSheet("color: white; font-size: 14px;")
+        # 카메라 꽉 차게 표시
+        self.video_label.setScaledContents(True) 
         
-        left_layout.addWidget(self.video_label, alignment=Qt.AlignmentFlag.AlignCenter)
+        cam_layout.addWidget(self.video_label)
+        main_layout.addWidget(cam_container, stretch=2) # 2/3 비율
+
+        # --- [RIGHT] 대시보드 영역 ---
+        dashboard_layout = QVBoxLayout()
+        dashboard_layout.setSpacing(20)
+
+        # 1. 현재 상태 카드 (Score Board)
+        self.score_card = self.create_card("현재 상태")
+        score_layout = QVBoxLayout(self.score_card)
         
-        control_layout = QHBoxLayout()
-        self.start_button = QPushButton("시작 (Start)") # 시작 버튼
+        self.status_label = QLabel("Ready")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setFont(QFont("Malgun Gothic", 24, QFont.Weight.Bold))
+        self.status_label.setStyleSheet("color: #aaa;")
         
-        self.stop_button = QPushButton("종료 (Stop)") # 종료 버튼
+        self.score_label = QLabel("Score: 0")
+        self.score_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.score_label.setFont(QFont("Malgun Gothic", 16))
+        
+        score_layout.addWidget(self.status_label)
+        score_layout.addWidget(self.score_label)
+        dashboard_layout.addWidget(self.score_card)
+
+        # 2. 실시간 리포트 (게이지 바)
+        self.report_card = self.create_card("실시간 리포트")
+        report_layout = QVBoxLayout(self.report_card)
+        
+        report_layout.addWidget(QLabel("바른 자세 유지율"))
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: 2px solid #e0e0e0;
+                border-radius: 5px;
+                text-align: center;
+                height: 25px;
+            }
+            QProgressBar::chunk {
+                background-color: #0078D7;
+                width: 10px;
+            }
+        """)
+        self.progress_bar.setValue(0)
+        report_layout.addWidget(self.progress_bar)
+        
+        # 시간 표시
+        time_layout = QGridLayout()
+        self.lbl_total_time = QLabel("00:00")
+        self.lbl_good_time = QLabel("00:00")
+        self.lbl_total_time.setStyleSheet("font-weight: bold; font-size: 14px;")
+        self.lbl_good_time.setStyleSheet("color: #28A745; font-weight: bold; font-size: 14px;")
+        
+        time_layout.addWidget(QLabel("총 시간:"), 0, 0)
+        time_layout.addWidget(self.lbl_total_time, 0, 1)
+        time_layout.addWidget(QLabel("바른 시간:"), 1, 0)
+        time_layout.addWidget(self.lbl_good_time, 1, 1)
+        report_layout.addLayout(time_layout)
+        
+        dashboard_layout.addWidget(self.report_card)
+
+        # 3. 컨트롤 버튼
+        btn_layout = QHBoxLayout()
+        self.start_button = QPushButton("측정 시작")
+        self.start_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.start_button.setFixedHeight(50)
+        self.start_button.setStyleSheet("""
+            background-color: #0078D7; color: white; border-radius: 10px; font-size: 16px; font-weight: bold;
+        """)
+        
+        self.stop_button = QPushButton("종료")
+        self.stop_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.stop_button.setFixedHeight(50)
         self.stop_button.setEnabled(False)
+        self.stop_button.setStyleSheet("""
+            QPushButton { background-color: #dc3545; color: white; border-radius: 10px; font-size: 16px; font-weight: bold; }
+            QPushButton:disabled { background-color: #e0e0e0; color: #aaa; }
+        """)
         
-        control_layout.addWidget(self.start_button)
-        control_layout.addWidget(self.stop_button)
-        left_layout.addLayout(control_layout)
+        btn_layout.addWidget(self.start_button)
+        btn_layout.addWidget(self.stop_button)
+        dashboard_layout.addLayout(btn_layout)
         
-        main_layout.addLayout(left_layout, 2) # 좌측 영역이 2의 비율
-        
-        # 우측: 프로필, 상태 및 정보
-        right_layout = QVBoxLayout()
-        right_layout.setSpacing(20)
-        right_layout.setContentsMargins(10, 0, 10, 0)
-        
-        # --- [NEW] 프로필 프레임 (우측 상단) ---
-        profile_frame = QFrame()
-        profile_frame.setFrameShape(QFrame.Shape.StyledPanel)
-        profile_frame.setStyleSheet("background-color: #e5e5e5; border-radius: 5px;")
-        profile_layout = QFormLayout(profile_frame)
-        profile_layout.setSpacing(10)
-        
-        profile_title = QLabel("사용자 프로필")
-        profile_title.setFont(QFont("Malgun Gothic", 14, QFont.Weight.Bold))
-        profile_layout.addRow(profile_title)
-        
-        # --- [NEW] 프로필 프레임 (우측 상단) ---
-        profile_frame = QFrame()
-        profile_frame.setFrameShape(QFrame.Shape.StyledPanel)
-        profile_frame.setStyleSheet("background-color: #e5e5e5; border-radius: 5px;")
-        profile_layout = QFormLayout(profile_frame)
-        profile_layout.setSpacing(10)
-        
-        profile_title = QLabel("사용자 프로필")
-        profile_title.setFont(QFont("Malgun Gothic", 14, QFont.Weight.Bold))
-        profile_layout.addRow(profile_title)
-        
-        # 1. 프로필 데이터 로드 (json 파일에서 읽기)
-        profile_data = load_profile()
-        
-        # 2. 데이터 추출 (저장된 키: nickname, height, weight, avatar)
-        # 데이터가 없을 경우 기본값(Default)을 설정합니다.
-        user_nickname = profile_data.get("nickname", "게스트")
-        user_height = profile_data.get("height", "-")
-        user_weight = profile_data.get("weight", "-")
-        user_avatar = profile_data.get("avatar", "👤") # 아바타 텍스트
+        dashboard_layout.addStretch() # 남은 공간 채우기
+        main_layout.addLayout(dashboard_layout, stretch=1) # 1/3 비율
 
-        # 아바타에서 이모지만 추출 
-        # 괄호가 있다면 괄호 안의 내용만, 없다면 전체 표시
-        if "(" in user_avatar and ")" in user_avatar:
-            emoji = user_avatar.split("(")[1].split(")")[0]
-        else:
-            # "기본 아바타 (A)" 같은 경우 처리 혹은 단순화
-            emoji = "👤" if "기본" in user_avatar else user_avatar
-
-        # 3. UI 라벨 생성
-        # 이름 라벨 (아바타 이모지 + 닉네임)
-        name_display = f"{emoji} {user_nickname}"
-        name_label = QLabel(name_display)
-        name_label.setStyleSheet("font-weight: bold; color: #333; font-size: 14px;")
+    def create_card(self, title_text):
+        """카드 스타일의 프레임 생성 헬퍼"""
+        frame = QFrame()
+        frame.setStyleSheet("background: white; border-radius: 10px; border: 1px solid #e0e0e0;")
         
-        # 신체 정보 라벨 (키 / 몸무게)
-        info_display = f"{user_height}cm / {user_weight}kg"
-        info_label = QLabel(info_display)
-        info_label.setStyleSheet("color: #555;")
+        # 내부 레이아웃 설정이 필요하므로 여기서는 프레임만 리턴하고,
+        # 타이틀은 사용하는 쪽에서 추가하거나, 이 함수 안에서 처리하려면 레이아웃을 리턴해야 함.
+        # 편의상 프레임만 리턴하고 외부에서 레이아웃 잡는 방식 사용.
+        # (하지만 타이틀을 여기서 박아주는게 깔끔하므로 수정)
         
-        # 4. 레이아웃에 추가
-        profile_layout.addRow("사용자:", name_label)
-        profile_layout.addRow("정보:", info_label)
+        layout = QVBoxLayout(frame)
+        title = QLabel(title_text)
+        title.setFont(QFont("Malgun Gothic", 12, QFont.Weight.Bold))
+        title.setStyleSheet("color: #333; border: none; padding-bottom: 5px; border-bottom: 2px solid #f0f0f0;")
+        layout.addWidget(title)
         
-        right_layout.addWidget(profile_frame)
-        
-        # 상태 프레임
-        status_frame = QFrame()
-        status_frame.setFrameShape(QFrame.Shape.StyledPanel)
-        status_frame.setStyleSheet("background-color: #e5e5e5; border-radius: 5px;")
-        status_layout = QVBoxLayout(status_frame)
-        status_layout.setSpacing(10)
-        
-        status_title = QLabel("현재 상태")
-        status_title.setObjectName("StatusTitle")
-        status_layout.addWidget(status_title, alignment=Qt.AlignmentFlag.AlignCenter)
-        
-        self.current_posture_label = QLabel("대기 중...")
-        self.current_posture_label.setObjectName("StatusLabel")
-        self.current_posture_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        status_layout.addWidget(self.current_posture_label)
-        
-        right_layout.addWidget(status_frame)
-        
-        # 타이머 프레임
-        timer_frame = QFrame()
-        timer_frame.setFrameShape(QFrame.Shape.StyledPanel)
-        timer_frame.setStyleSheet("background-color: #e5e5e5; border-radius: 5px;")
-        timer_layout = QFormLayout(timer_frame)
-        timer_layout.setSpacing(15)
-        
-        timer_title = QLabel("측정 시간")
-        timer_title.setFont(QFont("Malgun Gothic", 14, QFont.Weight.Bold))
-        timer_layout.addRow(timer_title)
-
-        self.total_time_label = QLabel("00:00:00")
-        self.total_time_label.setObjectName("TimerLabel")
-        timer_layout.addRow("총 시간:", self.total_time_label)
-        
-        self.correct_time_label = QLabel("00:00:00")
-        self.correct_time_label.setObjectName("CorrectTimerLabel")
-        timer_layout.addRow("바른 자세 시간:", self.correct_time_label)
-
-        right_layout.addWidget(timer_frame)
-        
-        # 환경 조언 (Placeholder)
-        env_frame = QFrame()
-        env_frame.setFrameShape(QFrame.Shape.StyledPanel)
-        env_frame.setStyleSheet("background-color: #e5e5e5; border-radius: 5px;")
-        env_layout = QVBoxLayout(env_frame)
-        
-        env_title = QLabel("업무 환경 조언 (준비 중)")
-        env_title.setFont(QFont("Malgun Gothic", 14, QFont.Weight.Bold))
-        env_layout.addWidget(env_title)
-        
-        self.env_advice_label = QLabel("모니터, 의자, 책상 높이 분석 기능이\n여기에 추가될 예정입니다.")
-        self.env_advice_label.setStyleSheet("color: #014ff8;")
-        env_layout.addWidget(self.env_advice_label)
-        
-        right_layout.addWidget(env_frame)
-
-        right_layout.addStretch(1) 
-        main_layout.addLayout(right_layout, 1) 
+        return frame
 
     # --- 기능 메서드 ---
 
     def set_loading_state(self):
-        """[NEW] 모델 로딩 중 UI 표시"""
-        self.video_label.clear()
-        self.video_label.setText("로딩 중...\n잠시만 기다려주세요.")
-        self.video_label.setStyleSheet("""
-            background-color: #222; 
-            color: #FFD700; 
-            font-size: 20px; 
-            font-weight: bold;
-            border: 2px solid #555;
-        """)
-        
-        self.current_posture_label.setText("초기화 중...")
-        self.current_posture_label.setStyleSheet("color: #888;")
-        
-        # 로딩 중 버튼 비활성화 (중복 클릭 방지)
+        self.video_label.setText("모델 로딩 중...")
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(False)
 
     def update_frame(self, frame):
-        """웹캠 프레임을 QLabel에 표시"""
-        # 첫 프레임이 들어오면 버튼 상태 변경 (혹은 MainController에서 제어)
+        """웹캠 프레임을 QLabel에 표시 (색상 보정 적용)"""
+        # 버튼 상태 동기화 (최초 1회)
         if not self.stop_button.isEnabled():
             self.stop_button.setEnabled(True)
             self.start_button.setEnabled(False)
 
         try:
+            # frame은 OpenCV에서 온 BGR 데이터입니다.
             h, w, ch = frame.shape
             bytes_per_line = ch * w
-            rgb_image = QImage(frame.data, w, h, bytes_per_line, QImage.Format.Format_BGR888).rgbSwapped()
-            pixmap = QPixmap.fromImage(rgb_image)
             
-            scaled_pixmap = pixmap.scaled(self.video_label.size(), 
-                                          Qt.AspectRatioMode.KeepAspectRatio, 
-                                          Qt.TransformationMode.SmoothTransformation)
+            # [수정] BGR -> RGB 변환을 명확하게 처리
+            # 방법 1: OpenCV로 변환 후 QImage 생성 (가장 안전함)
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            
+            # QImage 생성 (Format_RGB888 사용)
+            qt_image = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+            
+            # 비율 유지하면서 라벨 크기에 맞게 조정
+            pixmap = QPixmap.fromImage(qt_image)
+            scaled_pixmap = pixmap.scaled(
+                self.video_label.size(), 
+                Qt.AspectRatioMode.KeepAspectRatio, 
+                Qt.TransformationMode.SmoothTransformation
+            )
+            
             self.video_label.setPixmap(scaled_pixmap)
-            
-            # 영상이 나오면 스타일 초기화 (테두리 등 제거)
-            self.video_label.setStyleSheet("background-color: black; border: none;")
             
         except Exception as e:
             print(f"프레임 업데이트 오류: {e}")
 
     def update_posture_status(self, status):
-        """자세 상태 텍스트 및 색상 업데이트"""
         if status == "normal":
-            self.current_posture_label.setText("바른 자세")
-            self.current_posture_label.setStyleSheet("color: #4CAF50; font-weight: bold; font-size: 18px;") 
+            self.status_label.setText("GOOD")
+            self.status_label.setStyleSheet("color: #28A745;") # Green
+            # 바른 자세일 때 파란 테두리 효과 (영상 컨테이너)
+            self.video_label.parent().setStyleSheet("background: black; border-radius: 15px; border: 3px solid #0078D7;")
         elif status == "abnormal":
-            self.current_posture_label.setText("나쁜 자세!")
-            self.current_posture_label.setStyleSheet("color: #F44336; font-weight: bold; font-size: 18px;") 
+            self.status_label.setText("BAD")
+            self.status_label.setStyleSheet("color: #dc3545;") # Red
+            self.video_label.parent().setStyleSheet("background: black; border-radius: 15px; border: 3px solid #dc3545;")
         else:
-            self.current_posture_label.setText(status)
-            self.current_posture_label.setStyleSheet("color: #E0E0E0;") 
+            self.status_label.setText(status)
+            self.video_label.parent().setStyleSheet("background: black; border-radius: 15px;")
 
     def update_timers(self, total_sec, correct_sec):
-        """타이머 라벨 업데이트"""
-        self.total_time_label.setText(format_time(total_sec))
-        self.correct_time_label.setText(format_time(correct_sec))
+        # 1. 텍스트 업데이트
+        self.lbl_total_time.setText(format_time(total_sec))
+        self.lbl_good_time.setText(format_time(correct_sec))
+        
+        # 2. 프로그레스 바 및 점수 계산
+        if total_sec > 0:
+            ratio = int((correct_sec / total_sec) * 100)
+            self.progress_bar.setValue(ratio)
+            
+            # 현재 점수 (비율 기반)
+            self.score_label.setText(f"Score: {ratio}점")
+            
+            # 점수에 따라 게이지 색상 변경
+            if ratio >= 80:
+                self.progress_bar.setStyleSheet(self.progress_bar.styleSheet() + "QProgressBar::chunk { background-color: #28A745; }")
+            elif ratio >= 50:
+                self.progress_bar.setStyleSheet(self.progress_bar.styleSheet() + "QProgressBar::chunk { background-color: #FFC107; }")
+            else:
+                self.progress_bar.setStyleSheet(self.progress_bar.styleSheet() + "QProgressBar::chunk { background-color: #dc3545; }")
 
     def reset_ui(self):
-        """모니터링 종료 시 UI 초기화"""
         self.video_label.clear()
-        self.video_label.setText("웹캠 피드를 여기에 표시합니다.")
-        self.video_label.setStyleSheet("background-color: #000; color: #fff; font-size: 16px;")
+        self.video_label.setText("Camera OFF")
+        self.status_label.setText("Ready")
+        self.status_label.setStyleSheet("color: #aaa;")
+        self.video_label.parent().setStyleSheet("background: black; border-radius: 15px;") # 테두리 제거
         
-        self.current_posture_label.setText("대기 중...")
-        self.current_posture_label.setStyleSheet("color: #E0E0E0;")
+        self.lbl_total_time.setText("00:00")
+        self.lbl_good_time.setText("00:00")
+        self.progress_bar.setValue(0)
+        self.score_label.setText("Score: 0")
         
-        self.total_time_label.setText("00:00:00")
-        self.correct_time_label.setText("00:00:00")
-        
-        # 버튼 상태 복구
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)

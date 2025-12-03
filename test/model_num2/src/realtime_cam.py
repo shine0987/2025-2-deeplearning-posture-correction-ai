@@ -21,13 +21,8 @@ import joblib
 logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
 
 class RealtimePostureMonitor:
-<<<<<<< HEAD
-    def __init__(self, model_path='models/cnn_lstm_model.h5', scaler_path='models/scaler_cnn_lstm.pkl'):
-        """실시간 자세 모니터링 시스템"""
-=======
-    def __init__(self, model_path='models/cnn_lstm_model.h5'):
+    def __init__(self, scaler_path, model_path='models/cnn_lstm_model.h5'):
         """실시간 자세 모니터링 시스템 (수치 데이터만 사용)"""
->>>>>>> dfea69c151528c46e9c9c01240a07b7e742a4d5d
         # MediaPipe 초기화
         self.mp_pose = mp.solutions.pose
         self.mp_drawing = mp.solutions.drawing_utils
@@ -51,12 +46,6 @@ class RealtimePostureMonitor:
             self.load_model(model_path)
         else:
             logging.warning(f"모델 파일을 찾을 수 없습니다: {model_path}")
-            
-        # [추가] 스케일러 경로
-        if Path(scaler_path).exists():
-            self.load_model(scaler_path)
-        else:
-            logging.warning(f"스케일러 파일을 찾을 수 없습니다: {scaler_path}")
         
         # 데이터 버퍼 (시퀀스용 - 수치 데이터만)
         self.pose_buffer = deque(maxlen=self.sequence_length)
@@ -87,68 +76,49 @@ class RealtimePostureMonitor:
         }
         
         
-    def load_model(self, model_path_arg=None):
-        """저장된 모델 로드 (경로 완전 자동화 버전)"""
+    def load_model(self, model_path_arg):
+        """모델과 관련 파일들(Scaler, Encoder, Metadata) 로드"""
         try:
-            # 1. 경로 기준점 잡기 (현재 파일 위치 기준)
-            # .../test/model_num2/src/realtime_cam.py
-            current_file = os.path.abspath(__file__)
-            src_dir = os.path.dirname(current_file)           # .../src
-            model_num2_dir = os.path.dirname(src_dir)         # .../model_num2
-            models_dir = os.path.join(model_num2_dir, 'models') # .../model_num2/models
-
-            logging.info(f"📂 모델 폴더 탐색 경로: {models_dir}")
-
-            # 2. 파일 경로 확정
-            if model_path_arg and os.path.isabs(model_path_arg):
+            # 경로 설정
+            if os.path.exists(model_path_arg):
                 h5_path = model_path_arg
+                base_dir = os.path.dirname(model_path_arg)
             else:
-                h5_path = os.path.join(models_dir, 'cnn_lstm_model.h5')
+                base_dir = 'models'
+                h5_path = os.path.join(base_dir, 'best_cnn_lstm_model.h5')
 
-            scaler_path = os.path.join(models_dir, 'scaler_cnn_lstm.pkl')
-            label_path = os.path.join(models_dir, 'label_encoder_cnn_lstm.pkl')
-            meta_path = os.path.join(models_dir, 'model_metadata_cnn_lstm.json')
+            scaler_path = os.path.join(base_dir, 'scaler_cnn_lstm.pkl')
+            label_path = os.path.join(base_dir, 'label_encoder_cnn_lstm.pkl')
+            meta_path = os.path.join(base_dir, 'model_metadata_cnn_lstm.json')
 
-            # 3. 파일 존재 확인
-            if not os.path.exists(h5_path):
-                raise FileNotFoundError(f"모델 파일 없음: {h5_path}")
+            logging.info(f"📂 파일 로드 시도:\n - Model: {h5_path}\n - Scaler: {scaler_path}")
 
-            # 4. 로드 실행
-            self.model = tf.keras.models.load_model(h5_path)
+            # 파일 존재 확인
+            if not os.path.exists(h5_path): raise FileNotFoundError(f"모델 없음: {h5_path}")
+            if not os.path.exists(scaler_path): raise FileNotFoundError(f"스케일러 없음: {scaler_path}")
+            if not os.path.exists(meta_path): raise FileNotFoundError(f"메타데이터 없음: {meta_path}")
+
+            # 로드 실행 (compile=False는 예측 전용)
+            self.model = tf.keras.models.load_model(h5_path, compile=False)
             self.scaler = joblib.load(scaler_path)
             self.label_encoder = joblib.load(label_path)
             
-<<<<<<< HEAD
             with open(meta_path, 'r') as f:
-=======
-            self.model = tf.keras.models.load_model(model_path)
-            self.scaler = joblib.load('models/scaler_cnn_lstm.pkl')
-            self.label_encoder = joblib.load('models/label_encoder_cnn_lstm.pkl')
-            
-            # 메타데이터 로드
-            metadata_path = 'models/model_metadata_cnn_lstm.json'
-            with open(metadata_path, 'r') as f:
->>>>>>> dfea69c151528c46e9c9c01240a07b7e742a4d5d
                 metadata = json.load(f)
             
             self.sequence_length = metadata['sequence_length']
             self.feature_columns = metadata['feature_columns']
             
-<<<<<<< HEAD
-            # 버퍼 크기 재설정
+            # 버퍼 재설정
             self.pose_buffer = deque(maxlen=self.sequence_length)
-=======
-            logging.info(f"모델 로드 완료 (sequence_length={self.sequence_length}, 수치 데이터만 사용)")
->>>>>>> dfea69c151528c46e9c9c01240a07b7e742a4d5d
             
-            logging.info(f"✅ 모델 및 메타데이터 로드 완료!")
+            logging.info(f"✅ 모델 로드 성공 (Seq: {self.sequence_length})")
             return True
 
         except Exception as e:
             logging.error(f"❌ 모델 로드 실패: {e}")
             self.model = None
             return False
-    
     
     def extract_pose_features(self, landmarks, image_shape) -> dict:
         """포즈 랜드마크에서 특성 추출"""
@@ -423,8 +393,6 @@ class RealtimePostureMonitor:
             return True
         return False
     
-<<<<<<< HEAD
-=======
     def run(self, camera_id=0, show_window=True):
         """실시간 모니터링 실행"""
         cap = cv2.VideoCapture(camera_id)
@@ -499,71 +467,143 @@ class RealtimePostureMonitor:
         cap.release()
         cv2.destroyAllWindows()
         logging.info("실시간 모니터링 종료")
->>>>>>> dfea69c151528c46e9c9c01240a07b7e742a4d5d
     
     def process_frame(self, frame):
-        """
-        [통합 예측 함수]
-        이미지 프레임 -> 전처리 -> 예측 -> 결과 반환
-        """
+        """프레임을 받아 자세를 예측하고, 특정 스켈레톤 점만 초록색으로 그린다"""
         if self.model is None:
             return {'predicted_class': 'Loading...', 'confidence': 0.0}
 
-        try:
-            # --- 1. CNN 입력 준비 (이미지) ---
-            # 학습 시 사용한 이미지 크기 (cnn_lstm_model.py 참고, 보통 128 또는 224)
-            IMG_SIZE = 128 
-            
-            img_resized = cv2.resize(frame, (IMG_SIZE, IMG_SIZE))
-            img_normalized = img_resized / 255.0
-            cnn_input = np.expand_dims(img_normalized, axis=0) # (1, 128, 128, 3)
+        # 1. MediaPipe로 포즈 추출
+        image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        image_rgb.flags.writeable = False
+        results = self.pose.process(image_rgb)
+        
+        # 사람이 감지되지 않음
+        if not results.pose_landmarks:
+            return {'predicted_class': 'No Pose', 'confidence': 0.0}
 
-            # --- 2. LSTM 입력 준비 (시퀀스) ---
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = self.pose.process(frame_rgb)
-            
-            if not results.pose_landmarks:
-                return {'predicted_class': 'No Pose', 'confidence': 0.0}
-
-            # 랜드마크 -> 특징 벡터 추출
+        if results.pose_landmarks:
+            h, w, _ = frame.shape
             landmarks = results.pose_landmarks.landmark
-            angles_dict = self.preprocessor.calculate_angles(landmarks) # preprocessing 사용
-            
-            feature_vector = []
-            for col in self.feature_columns:
-                if col in angles_dict:
-                    feature_vector.append(angles_dict[col])
-                else:
-                    feature_vector.append(0.0) # 좌표값 등은 0 처리 혹은 추가 로직 구현
 
-            # 버퍼에 추가
-            self.pose_buffer.append(feature_vector)
-            
-            # 시퀀스가 아직 덜 찼으면 대기
-            if len(self.pose_buffer) < self.sequence_length:
-                return {'predicted_class': 'Initializing...', 'confidence': 0.0}
-            
-            # 시퀀스 데이터 변환
-            seq_data = list(self.pose_buffer)
-            seq_scaled = self.scaler.transform(seq_data)
-            lstm_input = np.expand_dims(seq_scaled, axis=0) # (1, seq_len, features)
+            # 그릴 점들의 좌표를 담을 리스트
+            points_to_draw = []
 
-            # --- 3. 듀얼 인풋 예측 ---
-            # [주의] 모델 학습 시 Input 순서가 [img_input, num_input] 인지 확인 필요
-            prediction = self.model.predict([cnn_input, lstm_input], verbose=0)
+            # 1) 기본 랜드마크 (정수리 대용=코, 양 어깨, 양 골반)
+            # 0: 코, 11: 왼어깨, 12: 오른어깨, 23: 왼골반, 24: 오른골반
+            target_indices = [0, 11, 12, 23, 24]
+            for idx in target_indices:
+                lm = landmarks[idx]
+                # 가시성이 어느 정도 확보된 경우에만 그리기 (옵션)
+                if lm.visibility > 0.5: 
+                    cx, cy = int(lm.x * w), int(lm.y * h)
+                    points_to_draw.append((cx, cy))
+
+            # 2) 허리 중간 (Mid Hip) 계산 및 추가
+            # 왼쪽 골반(23)과 오른쪽 골반(24)의 중점
+            try:
+                l_hip = landmarks[23]
+                r_hip = landmarks[24]
+                if l_hip.visibility > 0.5 and r_hip.visibility > 0.5:
+                    mid_hip_x = int((l_hip.x + r_hip.x) / 2 * w)
+                    mid_hip_y = int((l_hip.y + r_hip.y) / 2 * h)
+                    points_to_draw.append((mid_hip_x, mid_hip_y))
+            except IndexError:
+                pass # 랜드마크 데이터가 불완전할 경우 패스
+
+            # 3) 점 그리기 실행
+            for pt in points_to_draw:
+                # cv2.circle(이미지, 중심좌표, 반지름, 색상BGR, 두께)
+                # 초록색(0, 255, 0), 내부 채움(-1)
+                cv2.circle(frame, pt, 6, (0, 255, 0), -1)
+
+        # 2. 특징 추출 (이하 기존 로직 동일)
+        features = self.extract_features(results.pose_landmarks.landmark)
+        
+        if features is None:
+            return {'predicted_class': 'Error', 'confidence': 0.0}
             
-            label_idx = np.argmax(prediction[0])
-            confidence = prediction[0][label_idx]
-            predicted_class = self.label_encoder.classes_[label_idx]
-
-            return {
-                'predicted_class': predicted_class,
-                'confidence': float(confidence)
-            }
-
+        # 3. 버퍼에 추가
+        self.pose_buffer.append(features)
+        
+        # 4. 데이터가 충분히 모였는지 확인
+        if len(self.pose_buffer) < self.sequence_length:
+            return {'predicted_class': 'Buffering...', 'confidence': 0.0}
+            
+        # 5. 예측 수행
+        try:
+            sequence_data = np.array(list(self.pose_buffer))
+            nsamples, nfeatures = sequence_data.shape
+            seq_reshaped = sequence_data.reshape(-1, nfeatures)
+            seq_scaled = self.scaler.transform(seq_reshaped)
+            seq_input = seq_scaled.reshape(1, nsamples, nfeatures)
+            
+            prediction = self.model.predict(seq_input, verbose=0)
+            predicted_idx = np.argmax(prediction)
+            confidence = prediction[0][predicted_idx]
+            
+            if self.label_encoder:
+                label = self.label_encoder.inverse_transform([predicted_idx])[0]
+            else:
+                label = "normal" if predicted_idx == 1 else "abnormal"
+            
+            return {'predicted_class': label, 'confidence': float(confidence)}
+            
         except Exception as e:
-            # 여기서 에러는 monitor_thread에서 잡아서 스로틀링함
-            raise e
+            return {'predicted_class': 'Error', 'confidence': 0.0}
+
+    def extract_features(self, landmarks):
+        """9가지 특징 추출 (각도 및 거리)"""
+        try:
+            coords = {}
+            for name, idx in self.upper_body_landmarks.items():
+                lm = landmarks[idx]
+                coords[name] = np.array([lm.x, lm.y, lm.z])
+
+            # 유틸리티 함수
+            def calculate_angle(a, b, c):
+                a = np.array(a); b = np.array(b); c = np.array(c)
+                radians = np.arctan2(c[1]-b[1], c[0]-b[0]) - np.arctan2(a[1]-b[1], a[0]-b[0])
+                angle = np.abs(radians*180.0/np.pi)
+                if angle > 180.0: angle = 360-angle
+                return angle
+
+            def calculate_distance(a, b):
+                return np.linalg.norm(np.array(a) - np.array(b))
+
+            # 좌표
+            nose = coords['nose']
+            l_sh = coords['left_shoulder']; r_sh = coords['right_shoulder']
+            l_hip = coords['left_hip']; r_hip = coords['right_hip']
+            mid_sh = (l_sh + r_sh) / 2
+            mid_hip = (l_hip + r_hip) / 2
+            
+            # --- 9가지 특징 계산 ---
+            # 1. neck_angle
+            neck_angle = calculate_angle(nose, mid_sh, mid_hip)
+            # 2. shoulder_angle
+            shoulder_angle = calculate_angle(l_sh, mid_sh, mid_sh + np.array([1, 0, 0]))
+            # 3. hip_angle
+            hip_angle = calculate_angle(l_hip, mid_hip, mid_hip + np.array([1, 0, 0]))
+            # 4. torso_angle
+            torso_angle = calculate_angle(mid_sh, mid_hip, mid_hip + np.array([0, -1, 0]))
+            # 5. shoulder_width
+            shoulder_width = calculate_distance(l_sh, r_sh)
+            # 6. hip_width
+            hip_width = calculate_distance(l_hip, r_hip)
+            # 7. torso_height
+            torso_height = calculate_distance(mid_sh, mid_hip)
+            # 8. neck_length
+            neck_length = calculate_distance(nose, mid_sh)
+            # 9. shoulder_hip_ratio
+            ratio = shoulder_width / (hip_width + 1e-6)
+            
+            # 순서 중요 (학습 데이터와 동일해야 함)
+            return [neck_angle, shoulder_angle, hip_angle, torso_angle, 
+                    shoulder_width, hip_width, torso_height, neck_length, ratio]
+            
+        except Exception:
+            return None
 
 
 def main():

@@ -33,7 +33,7 @@ class TutorialTab(QWidget):
         page1 = self.create_page(
             title="STEP 1. 자세 측정 시작",
             desc="웹캠이 정면을 향하도록 설정하고\n'시작(Start)' 버튼을 눌러주세요.\nAI가 실시간으로 자세를 분석합니다.",
-            img_placeholder_text="[이미지 공간]\n웹캠 화면과 시작 버튼이\n보이는 스크린샷"
+            img_placeholder_text="[이미지]\n웹캠 화면과 시작 버튼이\n보이는 스크린샷"
         )
         self.stacked_widget.addWidget(page1)
 
@@ -41,23 +41,23 @@ class TutorialTab(QWidget):
         page2 = self.create_page(
             title="STEP 2. 상태 모니터링",
             desc="화면 상단의 상태 메시지를 확인하세요.\n초록색은 '바른 자세', 빨간색은 '나쁜 자세'입니다.\n거북목이 되지 않도록 주의하세요!",
-            img_placeholder_text="[이미지 공간]\n초록색/빨간색 상태 메시지가\n뜨는 화면 예시"
+            img_placeholder_text="[이미지]\n초록색/빨간색 상태 메시지가\n뜨는 화면 예시"
         )
         self.stacked_widget.addWidget(page2)
 
         # --- 페이지 3: 랭킹 시스템 ---
         page3 = self.create_page(
             title="STEP 3. 랭킹 도전",
-            desc="운동이 끝나면 자동으로 기록이 저장됩니다.\n'바른 자세 퍼센트(%)'를 높여\n명예의 전당 상위권에 도전해보세요!",
-            img_placeholder_text="[이미지 공간]\n랭킹 탭의 순위표와\n퍼센트 그래프 예시"
+            desc="자동으로 기록이 저장됩니다.\n'바른 자세 퍼센트(%)'를 높여\n랭킹 상위권에 도전해보세요!",
+            img_placeholder_text="[이미지]\n랭킹 탭의 순위표와\n퍼센트 그래프 예시"
         )
         self.stacked_widget.addWidget(page3)
         
         # --- 페이지 4: 프로필 설정 ---
         page4 = self.create_page(
-            title="STEP 4. 나만의 프로필",
+            title="STEP 4. 내 프로필",
             desc="프로필 탭에서 닉네임과 아바타를 설정하세요.\n랭킹판에 내 캐릭터가 표시됩니다.\n친구들과 함께 경쟁해보세요.",
-            img_placeholder_text="[이미지 공간]\n프로필 설정 화면과\n귀여운 아바타 예시"
+            img_placeholder_text="[이미지]\n프로필 설정 화면과\n귀여운 아바타 예시"
         )
         self.stacked_widget.addWidget(page4)
 
@@ -102,7 +102,7 @@ class TutorialTab(QWidget):
         img_frame = QLabel(img_placeholder_text)
         img_frame.setFixedSize(400, 250)
         img_frame.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # 점선 테두리와 회색 배경으로 '이미지 넣을 곳'임을 표시 
+        
         img_frame.setStyleSheet("""
             background-color: #f0f0f0;
             border: 2px dashed #aaa;
