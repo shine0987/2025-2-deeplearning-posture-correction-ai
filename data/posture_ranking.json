@@ -48,6 +48,22 @@
         "avatar": "고양이 (🐱)"
     },
     {
+        "date": "2025-12-03 10:12:25",
+        "total_time": 22,
+        "correct_time": 13,
+        "posture_percent": 59.1,
+        "nickname": "shinhan123",
+        "avatar": "유령 (👻)"
+    },
+    {
+        "date": "2025-12-03 09:15:35",
+        "total_time": 42,
+        "correct_time": 15,
+        "posture_percent": 35.7,
+        "nickname": "shinhan",
+        "avatar": "고양이 (🐱)"
+    },
+    {
         "date": "2025-12-02 22:58:39",
         "total_time": 56,
         "correct_time": 0,
@@ -88,11 +104,19 @@
         "avatar": "고양이 (🐱)"
     },
     {
-        "date": "2025-12-03 09:15:35",
-        "total_time": 42,
-        "correct_time": 15,
-        "posture_percent": 35.7,
-        "nickname": "shinhan",
-        "avatar": "고양이 (🐱)"
+        "date": "2025-12-03 10:33:52",
+        "total_time": 31,
+        "correct_time": 0,
+        "posture_percent": 0.0,
+        "nickname": "shinhan123",
+        "avatar": "유령 (👻)"
+    },
+    {
+        "date": "2025-12-03 11:22:18",
+        "total_time": 10,
+        "correct_time": 0,
+        "posture_percent": 0.0,
+        "nickname": "shinhan123",
+        "avatar": "유령 (👻)"
     }
 ]

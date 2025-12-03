@@ -32,6 +32,9 @@ class MonitorThread(QThread):
     posture_status = pyqtSignal(str)      # 자세 상태 텍스트
     timer_updated = pyqtSignal(int, int)  # (총 시간, 바른 자세 시간)
     
+    # 로딩 완료 시그널
+    load_finished = pyqtSignal()
+    
     def __init__(self):
         super().__init__()
         self._is_running = False
@@ -51,52 +54,42 @@ class MonitorThread(QThread):
         logging.info("모니터링 스레드 시작")
         
         model_base_dir = "models"
-        
-        # .h5 파일 (모델)
         h5_file = "best_cnn_lstm_model.h5" 
-        # .pkl 파일 (스케일러)
         scaler_file = "scaler_cnn_lstm.pkl"
-        
-        # 가이드에 명시된 정확한 파일명 적용
-        model_filename = 'best_cnn_lstm_model.h5'      
-        scaler_filename = 'scaler_cnn_lstm.pkl'        
-        label_filename = 'label_encoder_cnn_lstm.pkl'  
-        meta_filename = 'model_metadata_cnn_lstm.json' 
 
         # 절대 경로 생성
         abs_model_path = os.path.abspath(os.path.join(model_base_dir, h5_file))
         abs_scaler_path = os.path.abspath(os.path.join(model_base_dir, scaler_file))
-        abs_label_path = os.path.abspath(os.path.join(model_base_dir, label_filename))
-        abs_meta_path = os.path.abspath(os.path.join(model_base_dir, meta_filename))
         
         # 2. 필수 파일 존재 여부 체크
         missing_files = []
         if not os.path.exists(abs_model_path): missing_files.append(model_filename)
         if not os.path.exists(abs_scaler_path): missing_files.append(scaler_filename)
-        if not os.path.exists(abs_label_path): missing_files.append(label_filename)
-        if not os.path.exists(abs_meta_path): missing_files.append(meta_filename)
-
+    
         if missing_files:
             logging.error(f"필수 모델 파일이 누락되었습니다: {missing_files}")
             logging.error(f"현재 위치에서 'models' 폴더를 찾을 수 없습니다. (현재위치: {os.getcwd()})")
             return # 파일이 없으면 시작하지 않음
 
-        # 3. 모니터링 객체 생성
+        # 3. 모델 로딩
         if self.monitor is None:
             try:
-                logging.info(f"모델 로드 시도: {abs_model_path}")
+                logging.info(f"모델 로드 시작: {abs_model_path}")
                 
                 # 키워드 인자(model_path=...)를 명시
                 self.monitor = RealtimePostureMonitor(
                     model_path=abs_model_path,
                     scaler_path=abs_scaler_path
                 )
-                logging.info("✅ 모델 및 전처리기 초기화 성공")
+                logging.info("✅ 모델 로드 완료")
                 
             except Exception as e:
                 logging.error(f"❌ 모델 초기화 실패: {e}")
                 return
 
+        # 로딩 완료 시그널 
+        self.load_finished.emit()
+        
         # 4. 카메라 연결
         self.cap = cv2.VideoCapture(0)
         if not self.cap.isOpened():
@@ -144,7 +137,7 @@ class MonitorThread(QThread):
             self.frame_ready.emit(frame)
             self.posture_status.emit(current_posture)
             
-            # 타이머
+            # 8. 타이머 
             cur_time = time.time()
             if cur_time - last_timer_update >= 1.0:
                 elapsed = cur_time - self.start_time
@@ -155,8 +148,6 @@ class MonitorThread(QThread):
                 
                 self.timer_updated.emit(self.total_time_sec, self.correct_time_sec)
                 last_timer_update = cur_time
-
-            time.sleep(0.03)
 
         # 종료 처리
         if self.cap:

@@ -9,7 +9,7 @@ import app_ui.data_manager as data_manager
 
 class ProfileTab(QWidget):
     """
-    프로필 탭: 명함(Card) 스타일의 깔끔한 조회 화면 & 수정 화면
+    프로필 탭: 명함(Card) 스타일 조회 화면 (칭호, 뱃지, 랭킹 포함) & 수정 화면
     """
     def __init__(self):
         super().__init__()
@@ -31,66 +31,96 @@ class ProfileTab(QWidget):
 
         # [Card Design] 프로필 카드 프레임
         card_frame = QFrame()
-        card_frame.setFixedWidth(350)
+        card_frame.setFixedWidth(380) # 너비 약간 넓힘
         card_frame.setStyleSheet("""
             QFrame {
                 background-color: white;
-                border-radius: 15px;
+                border-radius: 20px;
                 border: 1px solid #e0e0e0;
             }
         """)
         
-        # 그림자 효과 대신 깔끔한 내부 여백 사용
         card_layout = QVBoxLayout(card_frame)
         card_layout.setContentsMargins(30, 40, 30, 40)
-        card_layout.setSpacing(15)
+        card_layout.setSpacing(10)
 
-        # 1-1. 아바타 (크게)
+        # 1-1. 아바타
         self.view_avatar_label = QLabel("👤")
         self.view_avatar_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.view_avatar_label.setStyleSheet("font-size: 80px; border: none; background: transparent;")
         card_layout.addWidget(self.view_avatar_label)
 
-        # 1-2. 닉네임 (포인트 컬러: 파랑)
+        # [NEW] 1-2. 칭호 (Title)
+        self.view_title_label = QLabel("칭호 없음")
+        self.view_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.view_title_label.setFont(QFont("Malgun Gothic", 10, QFont.Weight.Bold))
+        # 캡슐 모양 스타일
+        self.view_title_label.setStyleSheet("""
+            color: white; 
+            background-color: #6C757D; 
+            border-radius: 10px; 
+            padding: 4px 10px;
+            margin-bottom: 5px;
+        """)
+        # 라벨 자체 크기를 글자에 맞추기 위해 레이아웃 감싸기
+        title_container = QHBoxLayout()
+        title_container.addStretch()
+        title_container.addWidget(self.view_title_label)
+        title_container.addStretch()
+        card_layout.addLayout(title_container)
+
+        # 1-3. 닉네임
         self.view_nickname_label = QLabel("Guest")
         self.view_nickname_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.view_nickname_label.setFont(QFont("Malgun Gothic", 18, QFont.Weight.Bold))
-        self.view_nickname_label.setStyleSheet("color: #0078D7; border: none; margin-top: 10px;")
+        self.view_nickname_label.setFont(QFont("Malgun Gothic", 20, QFont.Weight.Bold))
+        self.view_nickname_label.setStyleSheet("color: #0078D7; border: none;")
         card_layout.addWidget(self.view_nickname_label)
 
-        # 1-3. 구분선
+        # [NEW] 1-4. 대표 뱃지 (Badge)
+        self.view_badge_label = QLabel("🏅 뱃지 정보 없음")
+        self.view_badge_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.view_badge_label.setFont(QFont("Malgun Gothic", 11))
+        self.view_badge_label.setStyleSheet("color: #FF9800; border: none; font-weight: bold; margin-bottom: 15px;")
+        card_layout.addWidget(self.view_badge_label)
+
+        # 1-5. 구분선
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
         line.setStyleSheet("background-color: #f0f0f0; max-height: 1px;")
         card_layout.addWidget(line)
 
-        # 1-4. 신체 정보 (그리드 형태)
+        # [NEW] 1-6. 정보 (랭킹 추가)
         stats_layout = QHBoxLayout()
+        stats_layout.setSpacing(0)
         
-        # 키 정보
-        self.view_height_label = self.create_stat_widget("키 (Height)", "0 cm")
+        # 키
+        self.view_height_label = self.create_stat_widget("키", "0 cm")
         stats_layout.addLayout(self.view_height_label)
         
-        # 구분선 (세로)
-        v_line = QFrame()
-        v_line.setFrameShape(QFrame.Shape.VLine)
-        v_line.setStyleSheet("background-color: #f0f0f0; max-width: 1px;")
-        stats_layout.addWidget(v_line)
+        # 구분선 1
+        stats_layout.addWidget(self.create_v_line())
 
-        # 몸무게 정보
-        self.view_weight_label = self.create_stat_widget("몸무게 (Weight)", "0 kg")
+        # 몸무게
+        self.view_weight_label = self.create_stat_widget("몸무게", "0 kg")
         stats_layout.addLayout(self.view_weight_label)
+
+        # 구분선 2
+        stats_layout.addWidget(self.create_v_line())
+
+        # [NEW] 랭킹
+        self.view_rank_label = self.create_stat_widget("랭킹", "- 위")
+        stats_layout.addLayout(self.view_rank_label)
 
         card_layout.addLayout(stats_layout)
         layout.addWidget(card_frame)
 
-        # 1-5. 버튼 그룹
+        # 1-7. 버튼 그룹
         btn_layout = QVBoxLayout()
         btn_layout.setSpacing(10)
         
-        # 수정 버튼 (파랑)
+        # 수정 버튼
         self.edit_btn = QPushButton("프로필 수정")
-        self.edit_btn.setFixedWidth(350)
+        self.edit_btn.setFixedWidth(380)
         self.edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.edit_btn.setStyleSheet("""
             QPushButton {
@@ -105,9 +135,9 @@ class ProfileTab(QWidget):
         self.edit_btn.clicked.connect(self.go_to_edit_mode)
         btn_layout.addWidget(self.edit_btn)
 
-        # 로그아웃 버튼 (회색/단순화)
+        # 로그아웃 버튼
         self.logout_btn = QPushButton("로그아웃")
-        self.logout_btn.setFixedWidth(350)
+        self.logout_btn.setFixedWidth(380)
         self.logout_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.logout_btn.setStyleSheet("""
             QPushButton {
@@ -127,20 +157,27 @@ class ProfileTab(QWidget):
         self.stacked_layout.addWidget(page_widget)
 
     def create_stat_widget(self, title, value):
-        """신체 정보 표시용 소형 레이아웃"""
+        """정보 표시용 소형 레이아웃"""
         l = QVBoxLayout()
+        l.setContentsMargins(5, 5, 5, 5)
         lbl_title = QLabel(title)
         lbl_title.setStyleSheet("color: #888; font-size: 12px; border: none;")
         lbl_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         lbl_val = QLabel(value)
-        lbl_val.setStyleSheet("color: #333; font-size: 16px; font-weight: bold; border: none;")
+        lbl_val.setStyleSheet("color: #333; font-size: 15px; font-weight: bold; border: none;")
         lbl_val.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # 나중에 값을 업데이트하기 위해 값 라벨을 반환해야 함. 
-        # 여기서는 레이아웃에 추가하고 라벨 객체를 리턴.
+        
         l.addWidget(lbl_title)
         l.addWidget(lbl_val)
         return l
+
+    def create_v_line(self):
+        """세로 구분선 생성"""
+        v_line = QFrame()
+        v_line.setFrameShape(QFrame.Shape.VLine)
+        v_line.setStyleSheet("background-color: #e0e0e0; max-width: 1px; margin-top: 10px; margin-bottom: 10px;")
+        return v_line
 
     # --- 2. 수정 페이지 (Edit Mode) ---
     def init_edit_page(self):
@@ -150,7 +187,7 @@ class ProfileTab(QWidget):
 
         # 폼 컨테이너
         form_frame = QFrame()
-        form_frame.setFixedWidth(350)
+        form_frame.setFixedWidth(380)
         form_frame.setStyleSheet("""
             QFrame { background-color: white; border-radius: 15px; border: 1px solid #e0e0e0; }
             QLineEdit, QComboBox { 
@@ -202,20 +239,15 @@ class ProfileTab(QWidget):
         btn_layout.setSpacing(10)
         
         cancel_btn = QPushButton("취소")
-        cancel_btn.setFixedSize(170, 45)
+        cancel_btn.setFixedSize(185, 45)
         cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        cancel_btn.setStyleSheet("""
-            background-color: #f0f0f0; color: #333; border-radius: 8px; font-weight: bold;
-        """)
+        cancel_btn.setStyleSheet("background-color: #f0f0f0; color: #333; border-radius: 8px; font-weight: bold;")
         cancel_btn.clicked.connect(self.cancel_edit)
         
         save_btn = QPushButton("저장 (Save)")
-        save_btn.setFixedSize(170, 45)
+        save_btn.setFixedSize(185, 45)
         save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        # [Point Color] 저장 버튼은 초록색
-        save_btn.setStyleSheet("""
-            background-color: #28A745; color: white; border-radius: 8px; font-weight: bold;
-        """)
+        save_btn.setStyleSheet("background-color: #28A745; color: white; border-radius: 8px; font-weight: bold;")
         save_btn.clicked.connect(self.save_profile)
 
         btn_layout.addWidget(cancel_btn)
@@ -235,24 +267,30 @@ class ProfileTab(QWidget):
             self.stacked_layout.setCurrentIndex(1) # Edit
 
     def update_view_page(self, data):
-        """조회 화면 데이터 갱신"""
+        """조회 화면 데이터 갱신 (예시 데이터 포함)"""
+        # 1. 기본 정보
         self.view_nickname_label.setText(data.get("nickname", "Guest"))
         
-        # 키/몸무게 라벨 업데이트 (Layout 내부 위젯 접근)
-        # create_stat_widget에서 반환된 것은 Layout이므로, 그 안의 2번째 위젯(Value Label)을 찾아야 함
-        # 편의상 여기서 텍스트만 구성해서 다시 찾음
-        
-        # Layout.itemAt(1).widget() -> Value Label
-        h_layout = self.view_height_label
-        w_layout = self.view_weight_label
-        
-        h_val_label = h_layout.itemAt(1).widget()
-        w_val_label = w_layout.itemAt(1).widget()
+        # 2. [NEW] 칭호, 뱃지, 랭킹 (DB에 없으면 예시 데이터 표시)
+        # 실제로는 data_manager나 서버에서 계산된 값을 가져와야 합니다.
+        title = data.get("title", "바른 자세 입문자")  # 예시 데이터
+        badge = data.get("badge", "🐢 거북목 탈출기") # 예시 데이터
+        ranking = data.get("ranking", "상위 15%")     # 예시 데이터
+
+        self.view_title_label.setText(title)
+        self.view_badge_label.setText(badge)
+
+        # 3. 신체 정보 및 랭킹 업데이트
+        # 레이아웃 내부 위젯 접근 (Label)
+        h_val_label = self.view_height_label.itemAt(1).widget()
+        w_val_label = self.view_weight_label.itemAt(1).widget()
+        r_val_label = self.view_rank_label.itemAt(1).widget()
         
         h_val_label.setText(f"{data.get('height', '-')} cm")
         w_val_label.setText(f"{data.get('weight', '-')} kg")
+        r_val_label.setText(ranking)
 
-        # 아바타
+        # 4. 아바타
         avatar_txt = data.get("avatar", "👤")
         if "(" in avatar_txt:
             emoji = avatar_txt.split("(")[1].split(")")[0]
@@ -278,14 +316,18 @@ class ProfileTab(QWidget):
         if data and data.get("nickname"):
             self.stacked_layout.setCurrentIndex(0)
         else:
-            pass # 데이터 없으면 유지
+            pass 
 
     def save_profile(self):
+        # 칭호/뱃지/랭킹은 사용자가 수정하는 정보가 아니므로 저장하지 않음 (유지)
         new_data = {
             "nickname": self.input_nickname.text(),
             "height": self.input_height.text(),
             "weight": self.input_weight.text(),
-            "avatar": self.input_avatar.currentText()
+            "avatar": self.input_avatar.currentText(),
+            
+            # (옵션) 기존에 있던 칭호/뱃지 정보가 사라지지 않게 하려면 로드해서 merge 해야 함
+            # 여기서는 편의상 생략하거나, DB 로직에서 처리
         }
         
         data_manager.save_profile(new_data)
@@ -293,13 +335,12 @@ class ProfileTab(QWidget):
         self.stacked_layout.setCurrentIndex(0)
 
     def logout(self):
-        """로그아웃: 설정 초기화 및 종료"""
         try:
             current_config = data_manager.load_config()
             data_manager.save_config(
                 current_config.get("saved_id", ""), 
                 current_config.get("is_remember_id", False), 
-                False # 자동 로그인 OFF
+                False 
             )
             QMessageBox.information(self, "로그아웃", "로그아웃 되었습니다.\n프로그램을 종료합니다.")
             sys.exit(0)
