@@ -1,0 +1,54 @@
+[
+    {
+        "date": "2025-11-18 23:41:47",
+        "total_time": 27,
+        "correct_time": 13
+    },
+    {
+        "date": "2025-11-19 11:45:44",
+        "total_time": 105,
+        "correct_time": 0
+    },
+    {
+        "date": "2025-11-19 11:46:00",
+        "total_time": 3,
+        "correct_time": 0
+    },
+    {
+        "date": "2025-11-19 11:50:07",
+        "total_time": 7,
+        "correct_time": 0
+    },
+    {
+        "date": "2025-11-25 23:21:02",
+        "total_time": 12,
+        "correct_time": 0,
+        "posture_percent": 0.0
+    },
+    {
+        "date": "2025-11-25 23:35:44",
+        "total_time": 38,
+        "correct_time": 0,
+        "posture_percent": 0.0
+    },
+    {
+        "date": "2025-11-25 23:41:52",
+        "total_time": 5,
+        "correct_time": 0,
+        "posture_percent": 0.0
+    },
+    {
+        "date": "2025-11-26 10:35:14",
+        "total_time": 7,
+        "correct_time": 0,
+        "posture_percent": 0.0
+    },
+    {
+        "date": "2025-11-26 11:35:53",
+        "total_time": 45,
+        "correct_time": 0,
+        "posture_percent": 0.0,
+        "nickname": "shinhan",
+        "avatar": "고양이 (🐱)"
+    }
+]

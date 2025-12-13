@@ -1,0 +1,21 @@
+{
+  "img_height": 112,
+  "img_width": 112,
+  "sequence_length": 5,
+  "dropout_rate": 0.35,
+  "feature_columns": [
+    "neck_angle",
+    "shoulder_angle",
+    "hip_angle",
+    "torso_angle",
+    "shoulder_width",
+    "hip_width",
+    "torso_height",
+    "neck_length",
+    "shoulder_hip_ratio"
+  ],
+  "classes": [
+    "abnormal",
+    "normal"
+  ]
+}
